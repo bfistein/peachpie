@@ -14,6 +14,8 @@ using Pchp.CodeAnalysis.FlowAnalysis;
 using Devsense.PHP.Syntax.Ast;
 using Devsense.PHP.Syntax;
 using Devsense.PHP.Text;
+using System.Globalization;
+using System.Threading;
 
 namespace Pchp.CodeAnalysis.Symbols
 {
@@ -23,7 +25,6 @@ namespace Pchp.CodeAnalysis.Symbols
     internal abstract partial class SourceRoutineSymbol : MethodSymbol
     {
         ControlFlowGraph _cfg;
-        FlowState _state;
         LocalsTable _locals;
 
         /// <summary>
@@ -38,7 +39,7 @@ namespace Pchp.CodeAnalysis.Symbols
                 {
                     // create initial flow state
                     var state = StateBinder.CreateInitialState(this);
-                    
+
                     //
                     var binder = new SemanticsBinder(this.LocalsTable);
 
@@ -78,6 +79,11 @@ namespace Pchp.CodeAnalysis.Symbols
         internal abstract Signature SyntaxSignature { get; }
 
         /// <summary>
+        /// Specified return type.
+        /// </summary>
+        internal abstract TypeRef SyntaxReturnType { get; }
+
+        /// <summary>
         /// Gets routine declaration syntax.
         /// </summary>
         internal abstract AstNode Syntax { get; }
@@ -92,92 +98,115 @@ namespace Pchp.CodeAnalysis.Symbols
         /// </summary>
         internal abstract SourceFileSymbol ContainingFile { get; }
 
-        protected ImmutableArray<ParameterSymbol> _params;
+        protected List<ParameterSymbol> _implicitParams;
+        private SourceParameterSymbol[] _srcParams;
+        private SynthesizedParameterSymbol _varargParam;
 
         /// <summary>
-        /// Builds CLR method parameters.
+        /// Builds implicit parameters before source parameters.
         /// </summary>
-        /// <remarks>(Context, arg1, arg2, ...)</remarks>
-        protected virtual IEnumerable<ParameterSymbol> BuildParameters(Signature signature, PHPDocBlock phpdocOpt = null)
+        /// <returns></returns>
+        protected virtual IEnumerable<ParameterSymbol> BuildImplicitParams()
         {
-            int index = 0;
+            var index = 0;
 
             if (this.IsStatic)  // instance methods have <ctx> in <this>.<ctx> field, see SourceNamedTypeSymbol._lazyContextField
             {
+                // Context <ctx>
                 yield return new SpecialParameterSymbol(this, DeclaringCompilation.CoreTypes.Context, SpecialParameterSymbol.ContextName, index++);
             }
+        }
 
-            int pindex = 0;
+        bool RequiresLateStaticBoundParam => (this.Flags & RoutineFlags.UsesLateStatic) != 0 && !this.HasThis && (this is SourceMethodSymbol);
 
-            foreach (var p in signature.FormalParams)
+        /// <summary>
+        /// Constructs routine source parameters.
+        /// </summary>
+        protected IEnumerable<SourceParameterSymbol> BuildSrcParams(IEnumerable<FormalParam> formalparams, PHPDocBlock phpdocOpt = null)
+        {
+            var pindex = 0;
+
+            foreach (var p in formalparams)
             {
                 var ptag = (phpdocOpt != null) ? PHPDoc.GetParamTag(phpdocOpt, pindex, p.Name.Name.Value) : null;
 
-                yield return new SourceParameterSymbol(this, p, index++, ptag);
-
-                pindex++;
+                yield return new SourceParameterSymbol(this, p, pindex++, ptag);
             }
         }
 
-        protected virtual TypeSymbol BuildReturnType(Signature signature, TypeRef tref, PHPDocBlock phpdocOpt, TypeRefMask rtype)
+        protected virtual IEnumerable<SourceParameterSymbol> BuildSrcParams(Signature signature, PHPDocBlock phpdocOpt = null)
         {
-            if (signature.AliasReturn)
-            {
-                return DeclaringCompilation.CoreTypes.PhpAlias;
-            }
+            return BuildSrcParams(signature.FormalParams, phpdocOpt);
+        }
 
-            // PHP7 return type
-            if (tref != null)
+        internal virtual List<ParameterSymbol> ImplicitParameters
+        {
+            get
             {
-                return DeclaringCompilation.GetTypeFromTypeRef(tref);
-            }
-
-            //
-            var typeCtx = this.TypeRefContext;
-
-            //
-            if (phpdocOpt != null && (DeclaringCompilation.Options.PhpDocTypes & PhpDocTypes.ReturnTypes) != 0)
-            {
-                var returnTag = phpdocOpt.Returns;
-                if (returnTag != null && returnTag.TypeNames.Length != 0)
+                if (_implicitParams == null)
                 {
-                    var tmask = PHPDoc.GetTypeMask(typeCtx, returnTag.TypeNamesArray, this.GetNamingContext());
-                    if (!tmask.IsVoid && !tmask.IsAnyType)
-                    {
-                        return DeclaringCompilation.GetTypeFromTypeRef(typeCtx, tmask);
-                    }
+                    _implicitParams = BuildImplicitParams().ToList();
                 }
-            }
 
-            //
-            return DeclaringCompilation.GetTypeFromTypeRef(typeCtx, rtype);
+                // late static bound parameter may be needed based on flow analysis,
+                // so we have to ensure it is in the list if it isn't yet
+                if (RequiresLateStaticBoundParam && !_implicitParams.Any(SpecialParameterSymbol.IsLateStaticParameter))
+                {
+                    // PhpTypeInfo <static>
+                    _implicitParams.Add(
+                        new SpecialParameterSymbol(this, DeclaringCompilation.CoreTypes.PhpTypeInfo, SpecialParameterSymbol.StaticTypeName, _implicitParams.Count)
+                    );
+                }
+
+                //
+                return _implicitParams;
+            }
+        }
+
+        internal SourceParameterSymbol[] SourceParameters
+        {
+            get
+            {
+                if (_srcParams == null)
+                {
+                    _srcParams = BuildSrcParams(this.SyntaxSignature, this.PHPDocBlock).ToArray();
+                }
+
+                return _srcParams;
+            }
         }
 
         /// <summary>
-        /// Gets array of parameter symbols.
-        /// Lazily ensures there is the variadic parameter at the end if needed.
+        /// Implicitly added parameter corresponding to <c>params PhpValue[] {arguments}</c>.
+        /// Can be <c>null</c> if not needed.
         /// </summary>
-        ImmutableArray<ParameterSymbol> GetParameters()
+        protected ParameterSymbol VarargsParam
         {
-            if ((Flags & RoutineFlags.RequiresParams) != 0 && (this is SourceFunctionSymbol || this is SourceMethodSymbol))
+            get
             {
-                if (_params.Length == 0 || !_params.Last().IsParams)
+                // declare implicit [... varargs] parameter if needed and not defined as source parameter
+
+                if ((Flags & RoutineFlags.RequiresParams) != 0 && _varargParam == null && (this is SourceFunctionSymbol || this is SourceMethodSymbol))
                 {
-                    // lazily add [params] PhpValue[] <params>
-                    var p = new SynthesizedParameterSymbol( // IsImplicitlyDeclared, IsParams
-                        this,
-                        ArrayTypeSymbol.CreateSZArray(this.ContainingAssembly, this.DeclaringCompilation.CoreTypes.PhpValue),
-                        _params.Length,
-                        RefKind.None,
-                        SpecialParameterSymbol.ParamsName, true);
-
-                    //
-                    _params = _params.Add(p);
+                    var srcparams = this.SourceParameters;
+                    if (srcparams.Length == 0 || !srcparams.Last().IsParams)
+                    {
+                        _varargParam = new SynthesizedParameterSymbol( // IsImplicitlyDeclared, IsParams
+                            this,
+                            ArrayTypeSymbol.CreateSZArray(this.ContainingAssembly, this.DeclaringCompilation.CoreTypes.PhpValue),
+                            srcparams.Length,
+                            RefKind.None,
+                            SpecialParameterSymbol.ParamsName, true);
+                    }
                 }
-            }
 
-            //
-            return _params;
+                if (_varargParam != null)
+                {
+                    _varargParam.UpdateOrdinal(ImplicitParameters.Count + SourceParameters.Length);
+                }
+
+                return _varargParam;
+            }
         }
 
         public override bool IsExtern => false;
@@ -198,20 +227,43 @@ namespace Pchp.CodeAnalysis.Symbols
             }
         }
 
-        public override ImmutableArray<ParameterSymbol> Parameters => GetParameters();
+        public sealed override ImmutableArray<ParameterSymbol> Parameters
+        {
+            get
+            {
+                // [implicit parameters], [source parameters], [...varargs]
 
-        public override int ParameterCount => Parameters.Length;
+                var result = ImmutableArray<ParameterSymbol>.Empty;
+
+                result = result.AddRange(ImplicitParameters.Concat(SourceParameters));
+
+                var vararg = VarargsParam;
+                if (vararg != null)
+                {
+                    result = result.Add(vararg);
+                }
+
+                return result;
+            }
+        }
+
+        public sealed override int ParameterCount
+        {
+            get
+            {
+                // [implicit parameters], [source parameters], [...varargs]
+
+                var ps1 = ImplicitParameters;
+                var ps2 = SourceParameters;
+                var vararg = (VarargsParam != null) ? 1 : 0;
+
+                return ps1.Count + ps2.Length + vararg;
+            }
+        }
 
         public override bool ReturnsVoid => ReturnType.SpecialType == SpecialType.System_Void;
 
-        //public override TypeSymbol ReturnType { get; }
-        //{
-        //    get
-        //    {
-        //        throw new InvalidOperationException("To be overriden in derived class!");
-        //        //return DeclaringCompilation.GetTypeFromTypeRef(this, this.ControlFlowGraph.ReturnTypeMask);
-        //    }
-        //}
+        public override TypeSymbol ReturnType => PhpRoutineSymbolExtensions.ConstructClrReturnType(this);
 
         internal override ObsoleteAttributeData ObsoleteAttributeData => null;   // TODO: from PHPDoc
 
@@ -222,5 +274,11 @@ namespace Pchp.CodeAnalysis.Symbols
         internal override bool IsMetadataNewSlot(bool ignoreInterfaceImplementationChanges = false) => !IsOverride && !IsStatic;
 
         internal override bool IsMetadataVirtual(bool ignoreInterfaceImplementationChanges = false) => IsVirtual;
+
+        public override string GetDocumentationCommentXml(CultureInfo preferredCulture = null, bool expandIncludes = false, CancellationToken cancellationToken = default(CancellationToken))
+        {
+            // TODO: XmlDocumentationCommentCompiler
+            return this.PHPDocBlock?.Summary ?? string.Empty;
+        }
     }
 }

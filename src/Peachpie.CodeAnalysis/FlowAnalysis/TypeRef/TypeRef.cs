@@ -20,7 +20,6 @@ namespace Pchp.CodeAnalysis.FlowAnalysis
         {
             Debug.Assert(!string.IsNullOrEmpty(qname.Name.Value));
             Debug.Assert(!qname.IsReservedClassName);    // not self, parent, static
-            Debug.Assert(!qname.IsPrimitiveTypeName);    // use PrimitiveTypeRef instead
             _qname = qname;
         }
 
@@ -194,6 +193,7 @@ namespace Pchp.CodeAnalysis.FlowAnalysis
                     case PhpTypeCode.WritableString:
                     case PhpTypeCode.String: return QualifiedName.String;
                     case PhpTypeCode.PhpArray: return QualifiedName.Array;
+                    case PhpTypeCode.Null: return QualifiedName.Null;
                     default:
                         throw new ArgumentException();
                 }

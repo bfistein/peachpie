@@ -1,4 +1,5 @@
 ﻿using Pchp.Core;
+using Pchp.Core.Reflection;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -40,7 +41,41 @@ namespace Pchp.Library
         /// <param name="name">The name of the constant.</param>
 		/// <returns>The value.</returns>
 		public static PhpValue constant(Context ctx, string name)
-            => ctx.GetConstant(name);
+        {
+            var sepidx = name.IndexOf(':');
+            if (sepidx < 0)
+            {
+                // a global constant
+                PhpValue value;
+                if (ctx.TryGetConstant(name, out value))
+                {
+                    return value;
+                }
+            }
+            else
+            {
+                // a class constant
+                if (sepidx + 1 < name.Length && name[sepidx + 1] == ':')
+                {
+                    var tname = name.Remove(sepidx);
+                    var cname = name.Substring(sepidx + 2);
+
+                    var tinfo = ctx.GetDeclaredType(tname, true);
+                    if (tinfo != null)
+                    {
+                        var p = tinfo.GetDeclaredConstant(cname);
+                        if (p != null)
+                        {
+                            return p.GetValue(ctx, null);
+                        }
+                    }
+                }
+            }
+
+            //
+            PhpException.Throw(PhpError.Warning, Core.Resources.ErrResources.constant_not_found, name);
+            return PhpValue.Void;
+        }
 
         /// <summary>
         /// Retrieves defined constants.

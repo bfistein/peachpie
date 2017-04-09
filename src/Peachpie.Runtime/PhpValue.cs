@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
@@ -397,7 +398,6 @@ namespace Pchp.Core
         /// <summary>
         /// Gets underlaying value or object as <see cref="System.Object"/>.
         /// </summary>
-        /// <returns></returns>
         public object ToClr()
         {
             switch (this.TypeCode)
@@ -414,6 +414,34 @@ namespace Pchp.Core
                 default:
                     throw new ArgumentException();
             }
+        }
+
+        /// <summary>
+        /// Implicitly converts this value to <paramref name="type"/>.
+        /// </summary>
+        /// <param name="type">Target type.</param>
+        /// <returns>Converted value.</returns>
+        /// <exception cref="InvalidCastException">The value cannot be converted to specified <paramref name="type"/>.</exception>
+        public object ToClr(Type type)
+        {
+            if (type == typeof(PhpValue)) return this;
+            if (type == typeof(PhpAlias)) return this.EnsureAlias();
+            
+            if (type == typeof(long)) return this.ToLong();
+            if (type == typeof(int)) return (int)this.ToLong();
+            if (type == typeof(double)) return this.ToDouble();
+            if (type == typeof(bool)) return this.ToBoolean();
+            if (type == typeof(PhpArray)) return this.ToArray();
+            if (type == typeof(string)) return this.ToString();
+            if (type == typeof(object)) return this.ToClass();
+
+            if (this.Object != null && type.GetTypeInfo().IsAssignableFrom(this.Object.GetType()))
+            {
+                return this.Object;
+            }
+            
+            //
+            throw new InvalidCastException($"{this.TypeCode} -> {type.FullName}");
         }
 
         /// <summary>
@@ -555,6 +583,11 @@ namespace Pchp.Core
                 return Null;
             }
         }
+
+        /// <summary>
+        /// Implicitly converts a CLR type to PHP type.
+        /// </summary>
+        public static PhpValue FromClr(PhpValue value) => value;
 
         /// <summary>
         /// Converts an array of CLR values to PHP values.

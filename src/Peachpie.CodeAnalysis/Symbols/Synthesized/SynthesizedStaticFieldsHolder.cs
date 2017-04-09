@@ -42,6 +42,10 @@ namespace Pchp.CodeAnalysis.Symbols
 
         public override int Arity => 0;
 
+        internal override bool HasTypeArgumentsCustomModifiers => false;
+
+        public override ImmutableArray<CustomModifier> GetTypeArgumentCustomModifiers(int ordinal) => GetEmptyTypeArgumentCustomModifiers(ordinal);
+
         public override NamedTypeSymbol BaseType => DeclaringCompilation.CoreTypes.Object;
 
         public override Symbol ContainingSymbol => _class;
@@ -63,14 +67,6 @@ namespace Pchp.CodeAnalysis.Symbols
         public override bool IsSealed => true;
 
         public override bool IsStatic => false;
-
-        public override ImmutableArray<Location> Locations
-        {
-            get
-            {
-                throw new NotImplementedException();
-            }
-        }
 
         public override TypeKind TypeKind => TypeKind.Class;
 

@@ -6,11 +6,19 @@ php:
 
 install:
   - ./build/install_dependencies_ubuntu14.sh
-  - dotnet restore ./src
-  - dotnet build -f .netcoreapp1.0 ./src/Peachpie.Compiler.Tools
-  - dotnet pack --no-build -c Debug -o ./.nugs --version-suffix dev ./src/Peachpie.Compiler.Tools/project.json
-  - rm -rf ~/.nuget/packages/Peachpie.Compiler.Tools
-  - dotnet restore ./Samples
-  - dotnet run -f .netcoreapp1.0 -p ./Samples/ConsoleApplication1
+  - dotnet restore ./Peachpie.sln /p:TargetFrameworks=netcoreapp1.0
+  - dotnet build ./src/Peachpie.Runtime/ /p:TargetFrameworks=netcoreapp1.0
+  - dotnet build ./src/Peachpie.Library/ /p:TargetFrameworks=netcoreapp1.0
+  - dotnet build ./src/Peachpie.Library.Scripting/ /p:TargetFrameworks=netcoreapp1.0
+  - dotnet build ./src/Peachpie.Library.MsSql/ /p:TargetFrameworks=netcoreapp1.0
+  - dotnet build ./src/Peachpie.Library.MySql/ /p:TargetFrameworks=netcoreapp1.0
+  - dotnet build ./src/PDO/Peachpie.Library.PDO/ /p:TargetFrameworks=netcoreapp1.0
+  - dotnet build ./src/Peachpie.App/ /p:TargetFrameworks=netcoreapp1.0
+  - dotnet build ./src/Peachpie.CodeAnalysis/ /p:TargetFrameworks=netcoreapp1.0
+  - dotnet restore ./src/Peachpie.Compiler.Tools/ /p:TargetFrameworks=netcoreapp1.0
+  - dotnet build ./src/Peachpie.Compiler.Tools/ /p:TargetFrameworks=netcoreapp1.0
+  - dotnet build ./src/Peachpie.NET.Sdk/ /p:TargetFrameworks=netcoreapp1.0
+  - powershell -File ./build/update-cache.ps1 0.6.1
+
 script:
   - ./src/Tools/runtests_shell/runtests.sh

@@ -18,9 +18,10 @@ namespace Pchp.CodeAnalysis.Symbols
         /// </summary>
         internal virtual IPlace GetContextPlace()
         {
-            if (_params.Length != 0 && SpecialParameterSymbol.IsContextParameter(_params[0]))
+            var ps = ImplicitParameters;
+            if (ps.Count != 0 && SpecialParameterSymbol.IsContextParameter(ps[0]))
             {
-                return new ParamPlace(_params[0]);  // <ctx>
+                return new ParamPlace(ps[0]);  // <ctx>
             }
             else
             {
@@ -113,7 +114,7 @@ namespace Pchp.CodeAnalysis.Symbols
             var body = MethodGenerator.GenerateMethodBody(module, ghost,
                 (il) =>
                 {
-                    var cg = new CodeGenerator(il, module, diagnostic, OptimizationLevel.Release, false, this.ContainingType, this.GetContextPlace(), this.GetThisPlace());
+                    var cg = new CodeGenerator(il, module, diagnostic, module.Compilation.Options.OptimizationLevel, false, this.ContainingType, this.GetContextPlace(), this.GetThisPlace());
 
                     // return (T){routine}(p0, ..., pN);
                     cg.EmitConvert(cg.EmitThisCall(this, ghost), 0, ghost.ReturnType);
@@ -231,7 +232,7 @@ namespace Pchp.CodeAnalysis.Symbols
 
             module.SetMethodBody(this, MethodGenerator.GenerateMethodBody(module, this, (il) =>
             {
-                var cg = new CodeGenerator(this, il, module, diagnostic, OptimizationLevel.Release, false);
+                var cg = new CodeGenerator(this, il, module, diagnostic, module.Compilation.Options.OptimizationLevel, false);
 
                 // Template: return default(T)
                 cg.EmitRetDefault();
@@ -251,7 +252,25 @@ namespace Pchp.CodeAnalysis.Symbols
 
             cctor.EmitStringConstant(this.QualifiedName.ToString());
             cctor.EmitLoadToken(module, DiagnosticBag.GetInstance(), this, null);
-            cctor.EmitCall(module, DiagnosticBag.GetInstance(), System.Reflection.Metadata.ILOpCode.Call, module.Compilation.CoreMethods.Reflection.CreateUserRoutine_string_RuntimeMethodHandle);
+            cctor.EmitCall(module, DiagnosticBag.GetInstance(), ILOpCode.Call, module.Compilation.CoreMethods.Reflection.CreateUserRoutine_string_RuntimeMethodHandle);
+
+            field.EmitStore(cctor);
+        }
+    }
+
+    partial class SourceLambdaSymbol
+    {
+        internal void EmitInit(Emit.PEModuleBuilder module)
+        {
+            var cctor = module.GetStaticCtorBuilder(_container);
+            var field = new FieldPlace(null, this.EnsureRoutineInfoField(module));
+
+            // {RoutineInfoField} = RoutineInfo.CreateUserRoutine(name, handle)
+            field.EmitStorePrepare(cctor);
+
+            cctor.EmitStringConstant(this.MetadataName);
+            cctor.EmitLoadToken(module, DiagnosticBag.GetInstance(), this, null);
+            cctor.EmitCall(module, DiagnosticBag.GetInstance(), ILOpCode.Call, module.Compilation.CoreMethods.Reflection.CreateUserRoutine_string_RuntimeMethodHandle);
 
             field.EmitStore(cctor);
         }

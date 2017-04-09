@@ -37,11 +37,20 @@ namespace Pchp.Core
         /// <summary>
         /// Create default context with no output.
         /// </summary>
-        public static Context CreateEmpty()
+        /// <param name="cmdargs">
+        /// Optional arguments to be passed to PHP <c>$argv</c> and <c>$argc</c> global variables.
+        /// If the array is empty, variables are not created.
+        /// </param>
+        public static Context CreateEmpty(params string[] cmdargs)
         {
             var ctx = new Context();
             ctx.InitOutput(null);
             ctx.InitSuperglobals();
+
+            if (cmdargs != null && cmdargs.Length != 0)
+            {
+                ctx.IntializeArgvArgc(cmdargs);
+            }
 
             //
             return ctx;
@@ -182,9 +191,10 @@ namespace Pchp.Core
         public PhpTypeInfo GetDeclaredTypeOrThrow(string name, bool autoload = false)
         {
             var tinfo = GetDeclaredType(name, autoload);
-            
-            // TODO: Err PhpException.Throw(PhpError.Error, Resources.ErrResources....
-            Debug.Assert(tinfo != null);
+            if (tinfo == null)
+            {
+                PhpException.Throw(PhpError.Error, Resources.ErrResources.class_not_found, name);
+            }
 
             return tinfo;
         }
@@ -269,7 +279,7 @@ namespace Pchp.Core
                 }
                 else
                 {
-                    return script.MainMethod(this, locals, @this);
+                    return script.Evaluate(this, locals, @this);
                 }
             }
             else
@@ -278,13 +288,20 @@ namespace Pchp.Core
                 {
                     return PhpValue.Null;
                 }
-                else if (throwOnError)
-                {
-                    throw new ArgumentException($"File '{path}' cannot be included with current configuration.");   // TODO: ErrCode
-                }
                 else
                 {
-                    return PhpValue.Create(false);   // TODO: Warning
+                    var cause = string.Format(Resources.ErrResources.script_not_found, path);
+
+                    PhpException.Throw(
+                        throwOnError ? PhpError.Error : PhpError.Notice,
+                        Resources.ErrResources.script_inclusion_failed, path, cause, string.Join(";", IncludePaths), cd);
+
+                    if (throwOnError)
+                    {
+                        throw new ArgumentException(cause);
+                    }
+
+                    return PhpValue.False;
                 }
             }
         }
@@ -309,30 +326,6 @@ namespace Pchp.Core
 
         #endregion
 
-        #region Path Resolving
-
-        /// <summary>
-        /// Root directory (web root or console app root) where loaded scripts are relative to.
-        /// The root path does not end with directory separator.
-        /// </summary>
-        /// <remarks>
-        /// - <c>__FILE__</c> and <c>__DIR__</c> magic constants are resolved as concatenation with this value.
-        /// </remarks>
-        public virtual string RootPath { get; } = string.Empty;
-
-        /// <summary>
-        /// Current working directory.
-        /// </summary>
-        public virtual string WorkingDirectory { get; set; } = string.Empty;
-
-        /// <summary>
-        /// Set of include paths to be used to resolve full file path.
-        /// </summary>
-        public virtual string[] IncludePaths => _defaultIncludePaths;   // TODO:  => this.Config.FileSystem.IncludePaths
-        static readonly string[] _defaultIncludePaths = new[] { "." };
-
-        #endregion
-
         #region Constants
 
         /// <summary>
@@ -349,9 +342,25 @@ namespace Pchp.Core
         /// </summary>
         public PhpValue GetConstant(string name, ref int idx)
         {
-            return _constants.GetConstant(name, ref idx);
+            PhpValue value;
+            if (TryGetConstant(name, out value) == false)
+            {
+                // Warning: undefined constant
+                PhpException.Throw(PhpError.Warning, Resources.ErrResources.undefined_constant, name);
+                value = (PhpValue)name;
+            }
 
-            // TODO: check the constant is valid (PhpValue.IsSet) otherwise Warning: undefined constant
+            return value;
+        }
+
+        /// <summary>
+        /// Tries to get a global constant from current context.
+        /// </summary>
+        public bool TryGetConstant(string name, out PhpValue value)
+        {
+            int idx = 0;
+            value = _constants.GetConstant(name, ref idx);
+            return value.IsSet;
         }
 
         /// <summary>
@@ -368,39 +377,6 @@ namespace Pchp.Core
         /// Gets enumeration of all available constants and their values.
         /// </summary>
         public IEnumerable<KeyValuePair<string, PhpValue>> GetConstants() => _constants;
-
-        #endregion
-
-        #region Error Reporting
-
-        /// <summary>
-        /// Whether to throw an exception on soft error (Notice, Warning, Strict).
-        /// </summary>
-        public bool ThrowExceptionOnError { get; set; } = true;
-
-        /// <summary>
-        /// Gets whether error reporting is disabled or enabled.
-        /// </summary>
-        public bool ErrorReportingDisabled => _errorReportingDisabled != 0; // && !config.ErrorControl.IgnoreAtOperator;
-        int _errorReportingDisabled = 0;
-
-        /// <summary>
-        /// Disables error reporting. Can be called for multiple times. To enable reporting again 
-        /// <see cref="EnableErrorReporting"/> should be called as many times as <see cref="DisableErrorReporting"/> was.
-        /// </summary>
-        public void DisableErrorReporting()
-        {
-            _errorReportingDisabled++;
-        }
-
-        /// <summary>
-        /// Enables error reporting disabled by a single call to <see cref="DisableErrorReporting"/>.
-        /// </summary>
-        public void EnableErrorReporting()
-        {
-            if (_errorReportingDisabled > 0)
-                _errorReportingDisabled--;
-        }
 
         #endregion
 

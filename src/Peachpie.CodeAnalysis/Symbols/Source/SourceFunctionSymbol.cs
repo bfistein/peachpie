@@ -34,7 +34,6 @@ namespace Pchp.CodeAnalysis.Symbols
 
             _file = file;
             _syntax = syntax;
-            _params = BuildParameters(syntax.Signature, syntax.PHPDoc).AsImmutable();
         }
 
         /// <summary>
@@ -55,6 +54,8 @@ namespace Pchp.CodeAnalysis.Symbols
         public override ParameterSymbol ThisParameter => null;
 
         internal override Signature SyntaxSignature => _syntax.Signature;
+
+        internal override TypeRef SyntaxReturnType => _syntax.ReturnType;
 
         internal override AstNode Syntax => _syntax;
 
@@ -116,19 +117,11 @@ namespace Pchp.CodeAnalysis.Symbols
 
         public override bool IsVirtual => false;
 
-        public override TypeSymbol ReturnType
-        {
-            get
-            {
-                return BuildReturnType(_syntax.Signature, _syntax.ReturnType, _syntax.PHPDoc, this.ResultTypeMask);
-            }
-        }
-
         public override ImmutableArray<Location> Locations
         {
             get
             {
-                throw new NotImplementedException();
+                return ImmutableArray.Create(Location.Create(ContainingFile.SyntaxTree, _syntax.Span.ToTextSpan()));
             }
         }
     }

@@ -17,28 +17,48 @@ namespace Pchp.CodeAnalysis.Semantics
         /// <summary>
         /// Emits name of bound type.
         /// </summary>
-        /// <param name="cg"></param>
         internal void EmitClassName(CodeGenerator cg)
         {
-            if (TypeExpression != null)
+            if (_typeRef is PrimitiveTypeRef)
             {
+                // cannot emit the class name because type is not a class
+                throw new InvalidOperationException();  // not a class
+            }
+            else if (_typeRef is TranslatedTypeRef || _typeRef is ClassTypeRef)
+            {
+                // type name is known in parse time
+                var classname = ((INamedTypeRef)_typeRef).ClassName;
+                cg.Builder.EmitStringConstant(classname.ToString());
+            }
+            else if (this.ResolvedType != null)
+            {
+                // type was resolved by analysis
+                cg.Builder.EmitStringConstant(((IPhpTypeSymbol)this.ResolvedType).FullName.ToString());
+            }
+            else if (_typeRef is ReservedTypeRef)
+            {
+                // a reserved type, handle separately
+                switch (((ReservedTypeRef)_typeRef).Type)
+                {
+                    case ReservedTypeRef.ReservedType.@static:
+                        EmitLoadStaticPhpTypeInfo(cg);
+                        cg.EmitCall(ILOpCode.Call, cg.CoreMethods.Operators.GetName_PhpTypeInfo.Getter)
+                            .Expect(SpecialType.System_String);
+                        return;
+
+                    default:
+                        throw Roslyn.Utilities.ExceptionUtilities.UnexpectedValue(((ReservedTypeRef)_typeRef).Type);
+                }
+            }
+            else if (TypeExpression != null)
+            {
+                // indirect type, evaluate
                 cg.EmitConvert(TypeExpression, cg.CoreTypes.String);
             }
             else
             {
-                if (_typeRef is PrimitiveTypeRef)
-                {
-                    throw new InvalidOperationException();
-                }
-                else if (_typeRef is TranslatedTypeRef || _typeRef is ClassTypeRef)
-                {
-                    var classname = ((INamedTypeRef)_typeRef).ClassName;
-                    cg.Builder.EmitStringConstant(classname.ToString());
-                }
-                else
-                {
-                    throw Roslyn.Utilities.ExceptionUtilities.UnexpectedValue(_typeRef);
-                }
+                // unhandled
+                throw Roslyn.Utilities.ExceptionUtilities.UnexpectedValue(_typeRef);
             }
         }
 
@@ -58,6 +78,18 @@ namespace Pchp.CodeAnalysis.Semantics
             {
                 t = (TypeSymbol)EmitLoadPhpTypeInfo(cg, this.ResolvedType);
             }
+            else if (_typeRef is ReservedTypeRef) // late static bound
+            {
+                switch (((ReservedTypeRef)_typeRef).Type)
+                {
+                    case ReservedTypeRef.ReservedType.@static:
+                        t = EmitLoadStaticPhpTypeInfo(cg);
+                        break;
+
+                    default:
+                        throw Roslyn.Utilities.ExceptionUtilities.Unreachable;
+                }
+            }
             else
             {
                 // CALL <ctx>.GetDeclaredType(<typename>, autoload:true)
@@ -70,6 +102,25 @@ namespace Pchp.CodeAnalysis.Semantics
             }
 
             return t;
+        }
+
+        /// <summary>
+        /// Emits <c>PhpTypeInfo</c> of late static bound type.
+        /// </summary>
+        TypeSymbol  EmitLoadStaticPhpTypeInfo(CodeGenerator cg)
+        {
+            if (cg.Routine.HasThis)
+            {
+                // Template: GetPhpTypeInfo(this)
+                cg.EmitThis();
+                return cg.EmitCall(ILOpCode.Call, cg.CoreMethods.Dynamic.GetPhpTypeInfo_Object);
+            }
+            else
+            {
+                // Template: LOAD @static   // ~ @static parameter passed by caller
+                return new ParamPlace(cg.Routine.ImplicitParameters.First(SpecialParameterSymbol.IsLateStaticParameter))
+                    .EmitLoad(cg.Builder);
+            }
         }
 
         internal static ITypeSymbol EmitLoadPhpTypeInfo(CodeGenerator cg, ITypeSymbol t)

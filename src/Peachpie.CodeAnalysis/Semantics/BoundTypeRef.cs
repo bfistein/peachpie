@@ -1,4 +1,5 @@
 ﻿using Devsense.PHP.Syntax.Ast;
+using Microsoft.CodeAnalysis;
 using Pchp.CodeAnalysis.Symbols;
 using System;
 using System.Collections.Generic;
@@ -38,9 +39,16 @@ namespace Pchp.CodeAnalysis.Semantics
         internal TypeSymbol ResolvedType { get; set; }
 
         /// <summary>
+        /// Resolved type symbol if any.
+        /// </summary>
+        public ITypeSymbol Symbol { get { return this.ResolvedType; } }
+
+        /// <summary>
         /// Expression getting type name.
         /// </summary>
         internal BoundExpression TypeExpression { get; set; }
+
+        public bool IsDirect => TypeExpression == null;
 
         public BoundTypeRef(TypeRef tref)
         {

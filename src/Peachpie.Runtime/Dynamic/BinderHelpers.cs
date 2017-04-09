@@ -80,7 +80,8 @@ namespace Pchp.Core.Dynamic
 
             if (target_value == null)
             {
-                throw new NotImplementedException();    // TODO: call on NULL
+                restrictions =  restrictions.Merge(BindingRestrictions.GetInstanceRestriction(target.Expression, Expression.Constant(null)));
+                return;
             }
 
             for (;;)
@@ -382,10 +383,12 @@ namespace Pchp.Core.Dynamic
             // lookup a declared field
             for (var t = type; t != null; t = t.BaseType)
             {
-                var expr = t.DeclaredFields.Bind(field, classCtx, target, ctx, (target != null) ? TypeFields.FieldKind.InstanceField : TypeFields.FieldKind.StaticField);
-                if (expr != null)
+                foreach (var p in t.DeclaredFields.GetPhpProperties(field))
                 {
-                    return BindAccess(expr, ctx, access, rvalue);
+                    if (p.IsStatic == (target == null) && p.IsVisible(classCtx))
+                    {
+                        return BindAccess(p.Bind(ctx, target), ctx, access, rvalue);
+                    }
                 }
             }
 
@@ -570,15 +573,12 @@ namespace Pchp.Core.Dynamic
             return null;
         }
 
-        public static Expression BindClassConstant(PhpTypeInfo type, Type classCtx, string field, Expression ctx)
+        public static Expression BindClassConstant(PhpTypeInfo type, Type classCtx, string constName, Expression ctx)
         {
-            foreach (var t in type.EnumerateTypeHierarchy())    // types and interfaces
+            var p = type.GetDeclaredConstant(constName);
+            if (p != null && p.IsVisible(classCtx))
             {
-                var expr = t.DeclaredFields.Bind(field, classCtx, null, ctx, TypeFields.FieldKind.Constant);
-                if (expr != null)
-                {
-                    return expr;
-                }
+                return p.Bind(ctx, null);
             }
 
             //

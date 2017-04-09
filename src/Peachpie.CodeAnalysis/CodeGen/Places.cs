@@ -195,7 +195,7 @@ namespace Pchp.CodeAnalysis.CodeGen
             Contract.ThrowIfNull(field);
 
             _holder = holder;
-            _field = (FieldSymbol)field;
+            _field = ((FieldSymbol)field).OriginalDefinition;
 
             Debug.Assert(holder != null || field.IsStatic);
             Debug.Assert(holder == null || holder.TypeOpt.IsOfType(_field.ContainingType));
@@ -635,6 +635,14 @@ namespace Pchp.CodeAnalysis.CodeGen
                             .Expect(cg.CoreTypes.IPhpArray);
                     }
                 }
+                else if (type.IsOfType(cg.CoreTypes.ArrayAccess))
+                {
+                    // Operators.EnsureArray(<place>)
+                    _place.EmitLoad(cg.Builder);
+
+                    return cg.EmitCall(ILOpCode.Call, cg.CoreMethods.Operators.EnsureArray_ArrayAccess)
+                            .Expect(cg.CoreTypes.IPhpArray);
+                }
 
                 throw new NotImplementedException("EnsureArray(" + type.Name + ")");
             }
@@ -803,6 +811,8 @@ namespace Pchp.CodeAnalysis.CodeGen
                 }
                 else
                 {
+                    // TODO: unset of static local makes it regular local variable
+
                     // default(T)
                     cg.EmitLoadDefaultOfValueType(type);
                 }
@@ -1020,7 +1030,7 @@ namespace Pchp.CodeAnalysis.CodeGen
                 {
                     // .GetValue()
                     result = cg.EmitDereference(result);
-                    
+
                     // .DeepCopy()
                     if (_access.TargetType == null || cg.IsCopiable(_access.TargetType))
                     {
@@ -1199,9 +1209,9 @@ namespace Pchp.CodeAnalysis.CodeGen
         /// <param name="code">ld* or st* OP code.</param>
         void EmitOpCode(CodeGenerator cg, ILOpCode code)
         {
-            Debug.Assert(Field != null);
+            Debug.Assert(_field != null);
             cg.Builder.EmitOpCode(code);
-            cg.EmitSymbolToken(Field, null);
+            cg.EmitSymbolToken(_field.OriginalDefinition, null);
         }
 
         public bool HasAddress => true;
@@ -1231,7 +1241,7 @@ namespace Pchp.CodeAnalysis.CodeGen
         {
             // instance
             var instancetype = InstanceCacheHolder.EmitInstance(instanceOpt, cg, Instance);
-            
+
             //
             if (_field.IsStatic)
             {
@@ -1530,7 +1540,7 @@ namespace Pchp.CodeAnalysis.CodeGen
                 Debug.Assert(valueType == null);
 
                 // <place> = default(T)
-                
+
                 if (type == cg.CoreTypes.PhpAlias)
                 {
                     // new PhpAlias(void)

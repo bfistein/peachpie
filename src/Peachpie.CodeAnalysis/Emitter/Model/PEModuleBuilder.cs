@@ -1053,12 +1053,12 @@ namespace Pchp.CodeAnalysis.Emit
 
             Debug.Assert(methodSymbol.IsDefinitionOrDistinct());
 
-            // Method of anonymous type being translated
-            if (container.IsAnonymousType)
-            {
-                //methodSymbol = AnonymousTypeManager.TranslateAnonymousTypeMethodSymbol(methodSymbol);
-                throw new NotImplementedException();
-            }
+            //// Method of anonymous type being translated
+            //if (container.IsAnonymousType)
+            //{
+            //    //methodSymbol = AnonymousTypeManager.TranslateAnonymousTypeMethodSymbol(methodSymbol);
+            //    throw new NotImplementedException();
+            //}
 
             if (!methodSymbol.IsDefinition)
             {
@@ -1180,8 +1180,8 @@ namespace Pchp.CodeAnalysis.Emit
                 case SymbolKind.NamedType:
                     return Translate((NamedTypeSymbol)typeSymbol, syntaxNodeOpt, diagnostics);
 
-                //case SymbolKind.PointerType:
-                //    return Translate((PointerTypeSymbol)typeSymbol);
+                case SymbolKind.PointerType:
+                    return Translate((PointerTypeSymbol)typeSymbol);
 
                 case SymbolKind.TypeParameter:
                     return Translate((TypeParameterSymbol)typeSymbol);
@@ -1198,12 +1198,12 @@ namespace Pchp.CodeAnalysis.Emit
             Debug.Assert(namedTypeSymbol.IsDefinitionOrDistinct());
             Debug.Assert(diagnostics != null);
 
-            // Anonymous type being translated
-            if (namedTypeSymbol.IsAnonymousType)
-            {
-                //namedTypeSymbol = AnonymousTypeManager.TranslateAnonymousTypeSymbol(namedTypeSymbol);
-                throw new NotImplementedException();
-            }
+            //// Anonymous type being translated
+            //if (namedTypeSymbol.IsAnonymousType)
+            //{
+            //    //namedTypeSymbol = AnonymousTypeManager.TranslateAnonymousTypeSymbol(namedTypeSymbol);
+            //    throw new NotImplementedException();
+            //}
 
             // Substitute error types with a special singleton object.
             // Unreported bad types can come through NoPia embedding, for example.
@@ -1226,7 +1226,7 @@ namespace Pchp.CodeAnalysis.Emit
 
                 //return CodeAnalysis.Emit.ErrorType.Singleton;
 
-                throw new NotImplementedException();
+                throw new NotImplementedException($"Translate(ErrorType {namedTypeSymbol.Name})");
             }
 
             if (!namedTypeSymbol.IsDefinition)
@@ -1310,10 +1310,10 @@ namespace Pchp.CodeAnalysis.Emit
             return symbol;
         }
 
-        //internal static Cci.IPointerTypeReference Translate(PointerTypeSymbol symbol)
-        //{
-        //    return symbol;
-        //}
+        internal static Cci.IPointerTypeReference Translate(PointerTypeSymbol symbol)
+        {
+            return symbol;
+        }
 
         internal ImmutableArray<Cci.IParameterTypeInformation> Translate(ImmutableArray<ParameterSymbol> @params)
         {

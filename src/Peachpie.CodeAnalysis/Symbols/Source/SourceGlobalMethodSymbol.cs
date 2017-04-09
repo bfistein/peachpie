@@ -24,17 +24,13 @@ namespace Pchp.CodeAnalysis.Symbols
             Contract.ThrowIfNull(file);
 
             _file = file;
-            _params = BuildParameters().ToImmutableArray();
         }
 
         internal override Signature SyntaxSignature => new Signature(false, Array.Empty<FormalParam>());
 
-        protected override IEnumerable<ParameterSymbol> BuildParameters(Signature signature, PHPDocBlock phpdocOpt = null)
-        {
-            throw Roslyn.Utilities.ExceptionUtilities.Unreachable;
-        }
+        internal override TypeRef SyntaxReturnType => null;
 
-        IEnumerable<ParameterSymbol> BuildParameters()
+        protected override IEnumerable<ParameterSymbol> BuildImplicitParams()
         {
             int index = 0;
 
@@ -50,12 +46,21 @@ namespace Pchp.CodeAnalysis.Symbols
             // TODO: RuntimeTypeHandle <TypeContext>
         }
 
+        protected override IEnumerable<SourceParameterSymbol> BuildSrcParams(Signature signature, PHPDocBlock phpdocOpt = null)
+        {
+            return Array.Empty<SourceParameterSymbol>();
+        }
+
         public override ParameterSymbol ThisParameter
         {
             get
             {
                 var ps = this.Parameters;
-                return ps.First(p => p.Type.SpecialType == SpecialType.System_Object && p.Name == SpecialParameterSymbol.ThisName);
+                return ps.First(p =>
+                {
+                    Debug.Assert(p.Type != null);
+                    return (p.Name == SpecialParameterSymbol.ThisName && p.Type.SpecialType == SpecialType.System_Object);
+                });
             }
         }
 
@@ -91,15 +96,7 @@ namespace Pchp.CodeAnalysis.Symbols
         {
             get
             {
-                throw new NotImplementedException();
-            }
-        }
-
-        public override TypeSymbol ReturnType
-        {
-            get
-            {
-                return BuildReturnType(default(Signature), null, null, this.ResultTypeMask);
+                return ImmutableArray.Create(Location.Create(ContainingFile.SyntaxTree, default(Microsoft.CodeAnalysis.Text.TextSpan)));
             }
         }
 

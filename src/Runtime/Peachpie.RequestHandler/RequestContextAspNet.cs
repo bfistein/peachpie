@@ -100,9 +100,9 @@ namespace Pchp.Core
         /// <summary>
         /// Stream with contents of the incoming HTTP entity body.
         /// </summary>
-        public Stream InputStream => _httpctx.Request.InputStream;
+        Stream IHttpPhpContext.InputStream => _httpctx.Request.InputStream;
 
-        public void AddCookie(string name, string value, DateTimeOffset? expires, string path = "/", string domain = null, bool secure = false, bool httpOnly = false)
+        void IHttpPhpContext.AddCookie(string name, string value, DateTimeOffset? expires, string path, string domain, bool secure, bool httpOnly)
         {
             var cookie = new HttpCookie(name, value)
             {
@@ -118,6 +118,11 @@ namespace Pchp.Core
             }
 
             _httpctx.Response.AppendCookie(cookie);
+        }
+
+        void IHttpPhpContext.Flush()
+        {
+            _httpctx.Response.Flush();
         }
 
         #endregion
@@ -264,9 +269,20 @@ namespace Pchp.Core
         /// <summary>
         /// Includes requested script file.
         /// </summary>
-        public void Include(HttpRequest req)
+        public bool Include(HttpRequest req)
         {
-            this.Include(string.Empty, req.PhysicalPath.Substring(req.PhysicalApplicationPath.Length), false, true);
+            var relative_path = ScriptsMap.NormalizeSlashes(req.PhysicalPath.Substring(req.PhysicalApplicationPath.Length));
+            var script = ScriptsMap.GetDeclaredScript(relative_path);
+            if (script.IsValid)
+            {
+                this.MainScriptFile = script;
+                script.Evaluate(this, this.Globals, null);
+                return true;
+            }
+            else
+            {
+                return false;
+            }
         }
     }
 }

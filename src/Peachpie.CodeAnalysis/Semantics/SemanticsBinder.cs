@@ -17,6 +17,7 @@ namespace Pchp.CodeAnalysis.Semantics
 {
     /// <summary>
     /// Binds syntax nodes (<see cref="AST.LangElement"/>) to semantic nodes (<see cref="IOperation"/>).
+    /// Creates unbound nodes.
     /// </summary>
     internal class SemanticsBinder
     {
@@ -61,9 +62,18 @@ namespace Pchp.CodeAnalysis.Semantics
             if (parameters.Any(p => p.IsUnpack || p.Ampersand))
                 throw new NotImplementedException();
 
-            return BindExpressions(parameters.Select(p => p.Expression))
-                .Select(x => new BoundArgument(x))
-                .ToImmutableArray();
+            return BindArguments(parameters.Select(p => p.Expression));
+        }
+
+        ImmutableArray<BoundArgument> BindLambdaUseArguments(IEnumerable<AST.FormalParam> usevars)
+        {
+            return usevars.Select(v =>
+            {
+                var varuse = new AST.DirectVarUse(v.Name.Span, v.Name.Name);
+                return BindExpression(varuse, v.PassedByRef ? BoundAccess.ReadRef : BoundAccess.Read);
+            })
+            .Select(expr => new BoundArgument(expr))
+            .ToImmutableArray();
         }
 
         #endregion
@@ -149,8 +159,21 @@ namespace Pchp.CodeAnalysis.Semantics
             if (expr is AST.IssetEx) return BindIsSet((AST.IssetEx)expr).WithAccess(access);
             if (expr is AST.ExitEx) return BindExitEx((AST.ExitEx)expr).WithAccess(access);
             if (expr is AST.EmptyEx) return BindIsEmptyEx((AST.EmptyEx)expr).WithAccess(access);
+            if (expr is AST.LambdaFunctionExpr) return BindLambda((AST.LambdaFunctionExpr)expr).WithAccess(access);
+            if (expr is AST.EvalEx) return BindEval((AST.EvalEx)expr).WithAccess(access);
 
             throw new NotImplementedException(expr.GetType().FullName);
+        }
+
+        BoundLambda BindLambda(AST.LambdaFunctionExpr expr)
+        {
+            // Syntax is bound by caller, needed to resolve lambda symbol in analysis
+            return new BoundLambda(BindLambdaUseArguments(expr.UseParams));
+        }
+
+        BoundExpression BindEval(AST.EvalEx expr)
+        {
+            return new BoundEvalEx(BindExpression(expr.Code));
         }
 
         BoundExpression BindConstUse(AST.ConstantUse x)
@@ -163,13 +186,12 @@ namespace Pchp.CodeAnalysis.Semantics
             if (x is AST.ClassConstUse)
             {
                 var cx = (AST.ClassConstUse)x;
-                var dtype = cx.TargetType as AST.INamedTypeRef;
-                if (dtype != null && cx.Name.Equals("class"))   // Type::class ~ "Type"
-                {
-                    return new BoundLiteral(dtype.ClassName.ToString());
-                }
-
                 var typeref = BindTypeRef(cx.TargetType);
+
+                if (cx.Name.Equals("class"))   // pseudo class constant
+                {
+                    return new BoundPseudoClassConst(typeref, AST.PseudoClassConstUse.Types.Class);
+                }
 
                 return BoundFieldRef.CreateClassConst(typeref, new BoundVariableName(cx.Name));
             }
@@ -206,9 +228,27 @@ namespace Pchp.CodeAnalysis.Semantics
             return new BoundIncludeEx(BindExpression(x.Target, BoundAccess.Read), x.InclusionType);
         }
 
-        BoundExpression BindConcatEx(AST.ConcatEx x)
+        BoundExpression BindConcatEx(AST.ConcatEx x) => BindConcatEx(x.Expressions);
+
+        BoundExpression BindConcatEx(AST.Expression[] args)
         {
-            return new BoundConcatEx(BindArguments(x.Expressions));
+            // bind expressions to bound arguments
+            var boundargs = new List<BoundArgument>(BindArguments(args));
+
+            // flattern concat arguments
+            for (int i = 0; i < boundargs.Count; i++)
+            {
+                var c = boundargs[i].Value as BoundConcatEx;
+                if (c != null)
+                {
+                    var subargs = c.ArgumentsInSourceOrder;
+                    boundargs.RemoveAt(i);
+                    boundargs.InsertRange(i, subargs);
+                }
+            }
+
+            //
+            return new BoundConcatEx(boundargs.AsImmutable());
         }
 
         BoundRoutineCall BindFunctionCall(AST.FunctionCall x, BoundAccess access)
@@ -345,13 +385,7 @@ namespace Pchp.CodeAnalysis.Semantics
 
         BoundExpression BindItemUse(AST.ItemUse x, BoundAccess access)
         {
-            if (x.IsMemberOf != null)
-            {
-                Debug.Assert(x.Array.IsMemberOf == null);
-                // fix this phalanger ast weirdness:
-                x.Array.IsMemberOf = x.IsMemberOf;
-                x.IsMemberOf = null;
-            }
+            AstUtils.PatchItemUse(x);
 
             var arrayAccess = BoundAccess.Read;
 
@@ -441,7 +475,7 @@ namespace Pchp.CodeAnalysis.Semantics
         {
             if (expr.Operation == AST.Operations.Concat)
             {
-                return new BoundConcatEx(BindArguments(new[] { expr.LeftExpr, expr.RightExpr }));
+                return BindConcatEx(new[] { expr.LeftExpr, expr.RightExpr });
             }
             else
             {

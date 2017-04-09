@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -12,7 +13,7 @@ namespace Pchp.Core
     /// <summary>
     /// Interface providing access to configuration.
     /// </summary>
-    public interface IPhpConfigurationService
+    public interface IPhpConfigurationService : IEnumerable<IPhpConfiguration>
     {
         /// <summary>
         /// Gets collection of options.
@@ -43,6 +44,11 @@ namespace Pchp.Core
     public interface IPhpConfiguration
     {
         /// <summary>
+        /// Gets the corresponding extension name.
+        /// </summary>
+        string ExtensionName { get; }
+
+        /// <summary>
         /// Creates the configuration copy.
         /// </summary>
         /// <returns>New instance of <c>this</c> with copied values.</returns>
@@ -51,12 +57,14 @@ namespace Pchp.Core
 
     public sealed class PhpCoreConfiguration : IPhpConfiguration
     {
-        #region Construction
+        #region IPhpConfiguration
 
         internal PhpCoreConfiguration()
         {
 
         }
+
+        public string ExtensionName => "Core";
 
         public IPhpConfiguration Copy() => (PhpCoreConfiguration)this.MemberwiseClone();
 
@@ -106,6 +114,11 @@ namespace Pchp.Core
             }
             return true;
         }
+
+        /// <summary>
+        /// <c>variables_order</c> directive.
+        /// </summary>
+        public string VariablesOrder { get; set; } = "EGPCS";
 
         #region Request Control
 
@@ -157,17 +170,29 @@ namespace Pchp.Core
         public string IncludePaths = ".";
 
         #endregion
+
+        #region Mailer
+
+        public string SmtpServer = null;
+
+        public int SmtpPort = 25;
+
+        public bool AddXHeader = false;
+
+        public string DefaultFromHeader = null;
+
+        #endregion
     }
 
     #endregion
 
     partial class Context
     {
-        #region StaticPhpConfigurationService, PhpConfigurationService
+        #region DefaultPhpConfigurationService, PhpConfigurationService
 
-        class StaticPhpConfigurationService : IPhpConfigurationService
+        class DefaultPhpConfigurationService : IPhpConfigurationService
         {
-            public static readonly StaticPhpConfigurationService Instance = new StaticPhpConfigurationService();
+            public static readonly DefaultPhpConfigurationService Instance = new DefaultPhpConfigurationService();
 
             public PhpCoreConfiguration Core => Get<PhpCoreConfiguration>();
 
@@ -178,6 +203,10 @@ namespace Pchp.Core
                 IPhpConfiguration value;
                 return _defaultConfigs.TryGetValue(typeof(TOptions), out value) ? (TOptions)value : null;
             }
+
+            IEnumerator<IPhpConfiguration> IEnumerable<IPhpConfiguration>.GetEnumerator() => _defaultConfigs.Values.GetEnumerator();
+
+            IEnumerator IEnumerable.GetEnumerator() => ((IEnumerable<IPhpConfiguration>)this).GetEnumerator();
         }
 
         protected class PhpConfigurationService : IPhpConfigurationService
@@ -194,7 +223,7 @@ namespace Pchp.Core
 
             public PhpCoreConfiguration Core => _core;
 
-            public IPhpConfigurationService Parent => StaticPhpConfigurationService.Instance;
+            public IPhpConfigurationService Parent => DefaultPhpConfigurationService.Instance;
 
             public virtual TOptions Get<TOptions>() where TOptions : class, IPhpConfiguration
             {
@@ -213,6 +242,23 @@ namespace Pchp.Core
                 //
                 return (TOptions)value;
             }
+
+            IEnumerator<IPhpConfiguration> IEnumerable<IPhpConfiguration>.GetEnumerator()
+            {
+                // collect _configs & _defaultConfigs distinctly
+                var seen = new HashSet<Type>();
+                foreach (var pair in _configs.Concat(_defaultConfigs))
+                {
+                    if (seen.Add(pair.Key))
+                    {
+                        yield return pair.Value;
+                    }
+                }
+
+                yield break;
+            }
+
+            IEnumerator IEnumerable.GetEnumerator() => ((IEnumerable<IPhpConfiguration>)this).GetEnumerator();
         }
 
         #endregion
@@ -221,7 +267,7 @@ namespace Pchp.Core
         /// Gets a service providing access to current runtime configuration.
         /// </summary>
         public virtual IPhpConfigurationService Configuration => _configuration;
-        readonly PhpConfigurationService _configuration = new PhpConfigurationService();
+        readonly IPhpConfigurationService _configuration = new PhpConfigurationService();
 
         /// <summary>
         /// Registers a configuration to be accessed through <see cref="IPhpConfigurationService.Get{TOptions}"/> with default values.
@@ -236,7 +282,7 @@ namespace Pchp.Core
                 throw new ArgumentNullException(nameof(defaults));
             }
 
-            _defaultConfigs.Add(typeof(TOptions), defaults);
+            _defaultConfigs[typeof(TOptions)] = defaults;
         }
 
         /// <summary>

@@ -206,7 +206,7 @@ namespace Pchp.CodeAnalysis
         /// metadata. Some symbols (for example, partial classes) may be defined in more than one
         /// location.
         /// </summary>
-        public abstract ImmutableArray<Location> Locations { get; }
+        public virtual ImmutableArray<Location> Locations => ImmutableArray<Location>.Empty;
 
         /// <summary>
         /// <para>
@@ -580,23 +580,7 @@ namespace Pchp.CodeAnalysis
         /// </summary>
         public virtual string GetDocumentationCommentId()
         {
-            throw new NotImplementedException();
-
-            //// NOTE: we're using a try-finally here because there's a test that specifically
-            //// triggers an exception here to confirm that some symbols don't have documentation
-            //// comment IDs.  We don't care about "leaks" in such cases, but we don't want spew
-            //// in the test output.
-            //var pool = PooledStringBuilder.GetInstance();
-            //try
-            //{
-            //    StringBuilder builder = pool.Builder;
-            //    DocumentationCommentIDVisitor.Instance.Visit(this, builder);
-            //    return builder.Length == 0 ? null : builder.ToString();
-            //}
-            //finally
-            //{
-            //    pool.Free();
-            //}
+            return DocumentationComments.CommentIdResolver.GetId(this);
         }
 
         /// <summary>
@@ -611,7 +595,7 @@ namespace Pchp.CodeAnalysis
             bool expandIncludes = false,
             CancellationToken cancellationToken = default(CancellationToken))
         {
-            return "";
+            return string.Empty;
         }
 
         internal string GetDebuggerDisplay()
@@ -625,8 +609,7 @@ namespace Pchp.CodeAnalysis
             {
                 var compilation = this.DeclaringCompilation;
                 Debug.Assert(compilation != null);
-                throw new NotImplementedException();
-                //compilation.DeclarationDiagnostics.AddRange(diagnostics);
+                compilation.DeclarationDiagnostics.AddRange(diagnostics);
             }
         }
 

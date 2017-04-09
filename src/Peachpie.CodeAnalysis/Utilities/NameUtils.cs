@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Diagnostics;
 
 namespace Pchp.CodeAnalysis
 {
@@ -29,7 +30,55 @@ namespace Pchp.CodeAnalysis
         /// </summary>
         /// <param name="type">Type, cannot be <c>null</c>.</param>
         /// <returns>Qualified name of the type.</returns>
-        public static QualifiedName MakeQualifiedName(this TypeDecl type) => type.QualifiedName;
+        public static QualifiedName MakeQualifiedName(this TypeDecl type)
+        {
+            if (type is AnonymousTypeDecl)
+            {
+                return ((AnonymousTypeDecl)type).GetAnonymousTypeQualifiedName();
+            }
+            else
+            {
+                return type.QualifiedName;
+            }
+        }
+
+        public static QualifiedName MakeQualifiedName(string name, string clrnamespace, bool fullyQualified)
+        {
+            if (string.IsNullOrEmpty(clrnamespace))
+            {
+                return new QualifiedName(new Name(name), Name.EmptyNames, fullyQualified);
+            }
+
+            // count name parts
+            int ndots = 0;
+
+            for (int i = 0; i < clrnamespace.Length; i++)
+            {
+                var ch = clrnamespace[i];
+                if (ch == '.' || ch == QualifiedName.Separator)
+                {
+                    ndots++;
+                }
+            }
+            
+            // create name parts
+            var names = new Name[ndots + 1];
+
+            int lastDot = 0, n = 0;
+            for (int i = 0; i < clrnamespace.Length; i++)
+            {
+                var ch = clrnamespace[i];
+                if (ch == '.' || ch == QualifiedName.Separator)
+                {
+                    names[n++] = new Name(clrnamespace.Substring(lastDot, i - lastDot));
+                    lastDot = i + 1;
+                }
+            }
+            names[n++] = new Name(clrnamespace.Substring(lastDot, clrnamespace.Length - lastDot));
+            Debug.Assert(n == names.Length);
+
+            return new QualifiedName(new Name(name), names, fullyQualified);
+        }
 
         /// <summary>
         /// Make QualifiedName from the string like AAA\BBB\XXX
@@ -201,7 +250,7 @@ namespace Pchp.CodeAnalysis
         public static bool IsGlobalVar(ItemUse itemUse)
         {
             if (itemUse != null &&
-                itemUse.IsMemberOf == null && itemUse.Array.IsMemberOf == null &&
+                itemUse.IsMemberOf == null && (itemUse.Array as VarLikeConstructUse)?.IsMemberOf == null &&
                 itemUse.Array is DirectVarUse)
             {
                 // $GLOBALS[...]

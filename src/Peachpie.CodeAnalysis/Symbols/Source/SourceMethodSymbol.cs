@@ -31,9 +31,6 @@ namespace Pchp.CodeAnalysis.Symbols
 
             _type = type;
             _syntax = syntax;
-
-            // TODO: lazily; when using late static binding in a static method, add special <static> parameter, where runtime passes late static bound type
-            _params = BuildParameters(syntax.Signature, syntax.PHPDoc).AsImmutable();
         }
 
         public override ParameterSymbol ThisParameter
@@ -61,6 +58,8 @@ namespace Pchp.CodeAnalysis.Symbols
         }
 
         internal override Signature SyntaxSignature => _syntax.Signature;
+
+        internal override TypeRef SyntaxReturnType => _syntax.ReturnType;
 
         internal override AstNode Syntax => _syntax;
 
@@ -100,24 +99,7 @@ namespace Pchp.CodeAnalysis.Symbols
         {
             get
             {
-                throw new NotImplementedException();
-            }
-        }
-
-        public override TypeSymbol ReturnType
-        {
-            get
-            {
-                // we can use analysed return type in case the method cannot be an override
-                var propagateResultType = this.IsStatic || this.DeclaredAccessibility == Accessibility.Private || (this.IsSealed && !this.IsOverride);
-
-                // TODO: in case of override, use return type of overriden method // in some cases
-
-                //
-                var t = BuildReturnType(_syntax.Signature, _syntax.ReturnType, _syntax.PHPDoc,
-                    propagateResultType ? this.ResultTypeMask : TypeRefMask.AnyType);
-
-                return t;
+                return ImmutableArray.Create(Location.Create(ContainingFile.SyntaxTree, _syntax.Span.ToTextSpan()));
             }
         }
 

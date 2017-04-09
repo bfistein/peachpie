@@ -19,6 +19,8 @@ namespace Pchp.CodeAnalysis.Symbols
         private readonly NamedTypeSymbol _baseType;
         private readonly ImmutableArray<CustomModifier> _customModifiers;
 
+        public override NamedTypeSymbol BaseType => _baseType;
+
         private ArrayTypeSymbol(
             TypeSymbol elementType,
             NamedTypeSymbol array,
@@ -291,14 +293,6 @@ namespace Pchp.CodeAnalysis.Symbols
             get
             {
                 return null;
-            }
-        }
-
-        public override ImmutableArray<Location> Locations
-        {
-            get
-            {
-                return ImmutableArray<Location>.Empty;
             }
         }
 

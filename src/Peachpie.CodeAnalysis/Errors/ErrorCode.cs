@@ -54,14 +54,24 @@ namespace Pchp.CodeAnalysis.Errors
         ERR_ResourceInModule,
         ERR_ResourceNotUnique,
         ERR_TooManyUserStrings,
+
+        ERR_CircularBase,
+        ERR_TypeNameCannotBeResolved,
+
         FTL_InputFileNameTooLong,
+
         INF_UnableToLoadSomeTypesInAnalyzer,
+
         WRN_AnalyzerCannotBeCreated,
         WRN_NoAnalyzerInAssembly,
         WRN_NoConfigNotOnCommandLine,
         WRN_PdbLocalNameTooLong,
         WRN_PdbUsingNameTooLong,
         WRN_UnableToLoadAnalyzer,
-        WRN_UndefinedFunctionCall
+        WRN_UndefinedFunctionCall,
+        WRN_UninitializedVariableUse,
+        WRN_UndefinedType,
+        WRN_UndefinedMethodCall,
+        WRN_EvalDiscouraged,
     }
 }

@@ -18,10 +18,12 @@ namespace Peachpie.NETCore.Compiler.Tools
         /// <param name="args">Arguments passed from <c>dotnet build</c>.</param>
         public static int Main(string[] args)
         {
-            var rspfile = CreateRspFile(args);
+            string rspfile = CreateRspFile(args, out string sdkdir);
+
+            string libs = Environment.GetEnvironmentVariable("LIB") + @";C:\Windows\Microsoft.NET\assembly\GAC_MSIL";
 
             // compile
-            return PhpCompilerDriver.Run(PhpCommandLineParser.Default, null, new[] { "@" + rspfile }, null, System.IO.Directory.GetCurrentDirectory(), null, null, new SimpleAnalyzerAssemblyLoader(), Console.Out);
+            return PhpCompilerDriver.Run(PhpCommandLineParser.Default, null, new[] { "@" + rspfile }, null, System.IO.Directory.GetCurrentDirectory(), sdkdir, libs, new SimpleAnalyzerAssemblyLoader(), Console.Out);
         }
 
         #region ProcessArguments
@@ -33,14 +35,16 @@ namespace Peachpie.NETCore.Compiler.Tools
         /// Parses given arguments and gets new set of arguments to be passed to our compiler driver.
         /// </summary>
         /// <param name="args">Original set of arguments.</param>
+        /// <param name="sdkdir"><c>sdk-dir</c> argument value.</param>
         /// <returns>New set of arguments.</returns>
-        static string CreateRspFile(string[] args)
+        static string CreateRspFile(string[] args, out string sdkdir)
         {
             var todo = new Queue<string>(args);
             var newargs = new List<string>();
             var sourcefiles = new List<string>();
 
             string tmpoutput = System.IO.Directory.GetCurrentDirectory(); // temp output to place new RSP file into
+            sdkdir = null;
 
             while (todo.Count != 0)
             {
@@ -90,6 +94,9 @@ namespace Peachpie.NETCore.Compiler.Tools
                                 break;
                             case "generate-xml-documentation":
                                 newargs.Add($"/doc");
+                                break;
+                            case "sdk-dir":
+                                sdkdir = opt.Value.Value;
                                 break;
                         }
 
@@ -155,9 +162,9 @@ namespace Peachpie.NETCore.Compiler.Tools
             }
         }
 
-        #endregion
+#endregion
 
-        #region SimpleAnalyzerAssemblyLoader (NotImplementedException)
+#region SimpleAnalyzerAssemblyLoader (NotImplementedException)
 
         class SimpleAnalyzerAssemblyLoader : Microsoft.CodeAnalysis.IAnalyzerAssemblyLoader
         {
@@ -172,6 +179,6 @@ namespace Peachpie.NETCore.Compiler.Tools
             }
         }
 
-        #endregion
+#endregion
     }
 }

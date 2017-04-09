@@ -39,7 +39,7 @@ namespace Pchp.Core
         /// Script descriptor.
         /// </summary>
         [DebuggerDisplay("{Index}: {Path,nq}")]
-        public struct ScriptInfo
+        public struct ScriptInfo : IScript
         {
             /// <summary>
             /// Undefined script.
@@ -58,7 +58,7 @@ namespace Pchp.Core
 
             readonly public int Index;
             readonly public string Path;
-            readonly public MainDelegate MainMethod;
+            readonly MainDelegate MainMethod;
 
             static MainDelegate CreateMain(TypeInfo script)
             {
@@ -72,7 +72,24 @@ namespace Pchp.Core
                 return (MainDelegate)mainmethod.CreateDelegate(typeof(MainDelegate));
             }
 
-            internal ScriptInfo(int index, string path, TypeInfo script)
+            /// <summary>
+            /// Runs the script.
+            /// </summary>
+            public PhpValue Evaluate(Context ctx, PhpArray locals, object @this)
+            {
+                if (!IsValid) throw new InvalidOperationException();
+                return this.MainMethod(ctx, locals, @this);
+            }
+
+            /// <summary>
+            /// Resolves global function handle(s).
+            /// </summary>
+            public IEnumerable<MethodInfo> GetGlobalRoutineHandle(string name)
+            {
+                throw new NotSupportedException();
+            }
+
+            public ScriptInfo(int index, string path, TypeInfo script)
             {
                 Index = index;
                 Path = path;
@@ -116,7 +133,7 @@ namespace Pchp.Core
                 GetScriptIndex(path, mainmethod.DeclaringType.GetTypeInfo());
             }
 
-            public static string NormalizeSlashes(string path) => path.Replace('\\', '/');
+            public static string NormalizeSlashes(string path) => path.Replace('\\', '/').Replace("//", "/");
 
             public void SetIncluded<TScript>() => array.SetTrue(EnsureIndex<TScript>(ref ScriptIndexHolder<TScript>.Index) - 1);
 

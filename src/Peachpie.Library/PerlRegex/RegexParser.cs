@@ -99,7 +99,7 @@ namespace Pchp.Library.PerlRegex
 
                 if (char.IsLetterOrDigit(end_delimiter) || end_delimiter == '\\')
                 {
-                    throw new ArgumentException("delimiter_alnum_backslash");
+                    throw new ArgumentException(Resources.LibResources.delimiter_alnum_backslash);
                 }
 
                 char start_delimiter;
@@ -115,7 +115,7 @@ namespace Pchp.Library.PerlRegex
                 {
                     i++;
                 }
-                
+
                 if (i < end)
                 {
                     if (re[i] == start_delimiter)
@@ -124,12 +124,12 @@ namespace Pchp.Library.PerlRegex
                     }
                     else
                     {
-                        throw new ArgumentException("preg_no_end_delimiter");
+                        throw new ArgumentException(string.Format(Resources.LibResources.preg_no_end_delimiter, start_delimiter));
                     }
                 }
             }
 
-            throw new ArgumentException("regular_expression_empty");
+            throw new ArgumentException(Resources.LibResources.regular_expression_empty);
         }
 
         /// <summary>
@@ -160,9 +160,12 @@ namespace Pchp.Library.PerlRegex
                 }
                 else
                 {
-                    // reached a delimiter
-                    end = i + 1;
-                    return result;
+                    if (!char.IsWhiteSpace(ch)) // ignore trailing whitespaces
+                    {
+                        // reached a delimiter
+                        end = i + 1;
+                        return result;
+                    }
                 }
             }
 
@@ -497,19 +500,13 @@ namespace Pchp.Library.PerlRegex
                 {
                     int min;
                     int max;
-                    bool lazy;
+                    bool lazy, possessive;
 
                     switch (ch)
                     {
                         case '*':
                             min = 0;
                             max = int.MaxValue;
-
-                            if (CharsRight() > 0 && RightChar() == '+')
-                            {
-                                MoveRight();    // TODO: possesive quantifier
-                            }
-
                             break;
 
                         case '?':
@@ -520,12 +517,6 @@ namespace Pchp.Library.PerlRegex
                         case '+':
                             min = 1;
                             max = int.MaxValue;
-
-                            if (CharsRight() > 0 && RightChar() == '+')
-                            {
-                                MoveRight();    // TODO: possesive quantifier
-                            }
-
                             break;
 
                         case '{':
@@ -551,7 +542,6 @@ namespace Pchp.Library.PerlRegex
                                     goto ContinueOuterScan;
                                 }
                             }
-
                             break;
 
                         default:
@@ -560,18 +550,30 @@ namespace Pchp.Library.PerlRegex
 
                     ScanBlank();
 
-                    if (CharsRight() == 0 || RightChar() != '?')
-                        lazy = false;
-                    else
+                    lazy = CharsRight() != 0 && RightChar() == '?';
+                    possessive = CharsRight() != 0 && RightChar() == '+';
+
+                    if (lazy || possessive)
                     {
                         MoveRight();
-                        lazy = true;
+                    }
+
+                    if (UseOptionUngreedy() && !possessive)
+                    {
+                        /* This modifier inverts the "greediness" of the quantifiers so that they are not greedy by default, but become greedy if followed by '?'.
+                         * It is not compatible with Perl.
+                         * It can also be set by a(?U) modifier setting within the pattern or by a question mark behind a quantifier(e.g. .*?).
+                         */
+
+                        lazy = !lazy;
                     }
 
                     if (min > max)
+                    {
                         throw MakeException(SR.IllegalRange);
+                    }
 
-                    AddConcatenate(lazy, min, max);
+                    AddConcatenate(lazy, possessive, min, max);
                 }
 
                 ContinueOuterScan:
@@ -853,14 +855,16 @@ namespace Pchp.Library.PerlRegex
             //  (?P=name)
             //  (?:...)
 
+            if (CharsRight() >= 4 /*P<>)*/ && RightChar() == 'P' && RightChar(1) == '<') // (?P<name> // named group
+            {
+                MoveRight();    // skip 'P' in (?P<name>, continue as it would be (?<name>
+            }
+
             for (;;)
             {
                 if (CharsRight() == 0)
-                    break;
-
-                if (RightChar() == 'P') // (?P // named group, skip 'P'
                 {
-                    MoveRight();
+                    break;
                 }
 
                 switch (ch = MoveRightGetChar())
@@ -1524,6 +1528,59 @@ namespace Pchp.Library.PerlRegex
             return i;
         }
 
+        /// <summary>
+        /// Scans hex digits enclosed in curly braces or scans two hexadecimal digits.
+        /// Parsing starts at opening curly brace and ends after the right curly brace.
+        /// </summary>
+        /// <returns>Unicode character.</returns>
+        char ScanHex2OrEnclosed()
+        {
+            if (CharsRight() >= 2)  // we need at least 2 characters
+            {
+                int d;
+                int i = 0;
+
+                var ch = MoveRightGetChar();
+                if (ch == '{')  // {FFFF}
+                {
+                    if (!UseOptionUtf8())
+                    {
+                        // TODO: this should only be allowed with this option
+                    }
+
+                    // scan 1 - 4 hex digits
+                    int c = 0;
+                    for (; c < 4 && CharsRight() != 0; c++)
+                    {
+                        ch = MoveRightGetChar();
+                        d = HexDigit(ch);
+                        if (d >= 0)
+                        {
+                            i *= 0x10;
+                            i += d;
+                        }
+                        else
+                        {
+                            MoveLeft();
+                            break;
+                        }
+                    }
+
+                    if (c != 0 && CharsRight() != 0 && MoveRightGetChar() == '}')
+                    {
+                        return (char)i;
+                    }
+                }
+                else
+                {
+                    MoveLeft();
+                    return ScanHex(2);
+                }
+            }
+
+            throw MakeException(SR.TooFewHex);
+        }
+
         /*
          * Scans exactly c hex digits (c=2 for \xFF, c=4 for \uFFFF)
          */
@@ -1655,7 +1712,7 @@ namespace Pchp.Library.PerlRegex
             switch (ch)
             {
                 case 'x':
-                    return ScanHex(2);
+                    return ScanHex2OrEnclosed();    // /xFF or /x{FFFF}
                 case 'u':
                     return ScanHex(4);
                 case 'a':
@@ -1745,6 +1802,12 @@ namespace Pchp.Library.PerlRegex
         /// </summary>
         internal static RegexOptions OptionFromCode(char ch)
         {
+            switch (ch)
+            {
+                case 'U':
+                    return RegexOptions.PCRE_UNGREEDY;
+            }
+
             // case-insensitive
             if (ch >= 'A' && ch <= 'Z')
                 ch += (char)('a' - 'A');
@@ -1769,6 +1832,7 @@ namespace Pchp.Library.PerlRegex
 #endif
                 case 'e':
                     return RegexOptions.ECMAScript;
+
                 default:
                     return 0;
             }
@@ -1818,7 +1882,8 @@ namespace Pchp.Library.PerlRegex
                     return RegexOptions.PCRE_EXTRA;
 
                 default:
-                    return RegexOptions.Unknown;
+                    Core.PhpException.Throw(Core.PhpError.Notice, Resources.LibResources.modifier_unknown, option.ToString());
+                    return 0;
             }
         }
 
@@ -1879,7 +1944,7 @@ namespace Pchp.Library.PerlRegex
                                 // (?P // skip optional 'P'
                                 if (CharsRight() > 0 && RightChar() == 'P')
                                     MoveRight();
-                                
+
                                 if (CharsRight() > 1 && (RightChar() == '<' || RightChar() == '\''))
                                 {
                                     // named group: (?<... or (?'...
@@ -2150,6 +2215,16 @@ namespace Pchp.Library.PerlRegex
             return (_options & RegexOptions.ECMAScript) != 0;
         }
 
+        internal bool UseOptionUngreedy()
+        {
+            return (_options & RegexOptions.PCRE_UNGREEDY) != 0;
+        }
+
+        internal bool UseOptionUtf8()
+        {
+            return (_options & RegexOptions.PCRE_UTF8) != 0;
+        }
+
         internal const byte Q = 5;    // quantifier
         internal const byte S = 4;    // ordinary stopper
         internal const byte Z = 3;    // ScanBlank stopper
@@ -2355,9 +2430,18 @@ namespace Pchp.Library.PerlRegex
         /*
          * Finish the current quantifiable (when a quantifier is found)
          */
-        internal void AddConcatenate(bool lazy, int min, int max)
+        internal void AddConcatenate(bool lazy, bool possessive, int min, int max)
         {
-            _concatenation.AddChild(_unit.MakeQuantifier(lazy, min, max));
+            Debug.Assert(!(lazy && possessive));
+
+            var child = _unit.MakeQuantifier(lazy, min, max);
+
+            if (possessive)
+            {
+                child = child.MakePossessive();
+            }
+
+            _concatenation.AddChild(child);
             _unit = null;
         }
 

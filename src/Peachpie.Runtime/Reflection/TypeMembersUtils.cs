@@ -45,6 +45,27 @@ namespace Pchp.Core.Reflection
         }
 
         /// <summary>
+        /// Gets array of runtime fields in given type.
+        /// If the array is not instantiated yet, new instance is created and runtime fields initialized.
+        /// If the type does not support runtime fields, <c>null</c> is returned.
+        /// </summary>
+        public static PhpArray EnsureRuntimeFields(this PhpTypeInfo tinfo, object instance)
+        {
+            if (tinfo.RuntimeFieldsHolder != null)
+            {
+                var array = (PhpArray)tinfo.RuntimeFieldsHolder.GetValue(instance);
+                if (array == null)
+                {
+                    tinfo.RuntimeFieldsHolder.SetValue(instance, (array = new PhpArray()));
+                }
+
+                return array;
+            }
+
+            return null;
+        }
+
+        /// <summary>
         /// Enumerates visible instance fields of given object.
         /// </summary>
         /// <param name="instance">Object which fields will be enumerated.</param>
@@ -68,7 +89,7 @@ namespace Pchp.Core.Reflection
             return EnumerateInstanceFields(instance,
                 (f, d) => FormatPropertyNameForPrint(f, d),
                 (k) => k.ToString(),
-                (f) => true);
+                (f) => (f.Attributes & (FieldAttributes.Assembly)) != FieldAttributes.Assembly); // ignore "internal" fields
         }
 
         static string FormatPropertyNameForPrint(FieldInfo f, PhpTypeInfo declarer)
@@ -186,23 +207,6 @@ namespace Pchp.Core.Reflection
             Debug.Fail($"Unexpected field attributes {f.Attributes}");
 
             return f.Name;
-        }
-
-        /// <summary>
-        /// Resolves an instance property or gets <c>null</c> if the field is not declared.
-        /// </summary>
-        public static FieldInfo ResolveInstanceField(PhpTypeInfo tinfo, string fieldName)
-        {
-            for (var t = tinfo; t != null; t = t.BaseType)
-            {
-                var fld = t.DeclaredFields.TryGetInstanceField(fieldName);
-                if (fld != null)
-                {
-                    return fld;
-                }
-            }
-
-            return null;
         }
 
         /// <summary>
@@ -339,5 +343,136 @@ namespace Pchp.Core.Reflection
             //
             return true;
         }
+
+        #region PhpPropertyInfo
+
+        /// <summary>
+        /// Gets descriptor of property defined in given class or its base classes. Does not resolve runtime fields.
+        /// </summary>
+        /// <returns>Instance of property descriptor or <c>null</c> if such property is not declared.</returns>
+        public static PhpPropertyInfo GetDeclaredProperty(this PhpTypeInfo tinfo, string name)
+        {
+            for (var t = tinfo; t != null; t = t.BaseType)
+            {
+                foreach (var p in t.DeclaredFields.GetPhpProperties(name))
+                {
+                    if (!p.IsConstant) return p;
+                }
+            }
+
+            //
+            return null;
+        }
+
+        /// <summary>
+        /// Gets descriptor of property defined in given class or its base classes. Does not resolve runtime fields.
+        /// </summary>
+        /// <returns>Instance of property descriptor or <c>null</c> if such property is not declared.</returns>
+        public static PhpPropertyInfo GetDeclaredConstant(this PhpTypeInfo tinfo, string name)
+        {
+            for (var t = tinfo; t != null; t = t.BaseType)
+            {
+                foreach (var p in t.DeclaredFields.GetPhpProperties(name))
+                {
+                    if (p.IsConstant) return p;
+                }
+            }
+
+            // interfaces
+            foreach (var itype in tinfo.Type.GetInterfaces())
+            {
+                foreach (var p in itype.GetPhpTypeInfo().DeclaredFields.GetPhpProperties(name))
+                {
+                    if (p.IsConstant) return p;
+                }
+            }
+
+            //
+            return null;
+        }
+
+        /// <summary>
+        /// Gets descriptor representing a runtime field.
+        /// Can be <c>null</c> if type does not support runtime fields.
+        /// </summary>
+        public static PhpPropertyInfo GetRuntimeProperty(this PhpTypeInfo tinfo, string propertyName, object instance)
+        {
+            if (tinfo.RuntimeFieldsHolder != null)
+            {
+                var key = new IntStringKey(propertyName);
+
+                if (instance != null)
+                {
+                    var runtimefields = tinfo.GetRuntimeFields(instance);
+                    if (runtimefields == null || runtimefields.Count == 0 || !runtimefields.ContainsKey(key))
+                    {
+                        return null;
+                    }
+                }
+
+                return new PhpPropertyInfo.RuntimeProperty(tinfo, key);
+            }
+            else
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Gets enumeration of declared properties excluding constants.
+        /// </summary>
+        public static IEnumerable<PhpPropertyInfo> GetDeclaredProperties(this PhpTypeInfo tinfo)
+        {
+            for (var t = tinfo; t != null; t = t.BaseType)
+            {
+                foreach (var p in t.DeclaredFields.GetPhpProperties())
+                {
+                    if (!p.IsConstant) yield return p;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets enumeration of declared class constants.
+        /// </summary>
+        public static IEnumerable<PhpPropertyInfo> GetDeclaredConstants(this PhpTypeInfo tinfo)
+        {
+            for (var t = tinfo; t != null; t = t.BaseType)
+            {
+                foreach (var p in t.DeclaredFields.GetPhpProperties())
+                {
+                    if (p.IsConstant) yield return p;
+                }
+            }
+
+            // interfaces
+            foreach (var itype in tinfo.Type.GetInterfaces())
+            {
+                foreach (var p in itype.GetPhpTypeInfo().DeclaredFields.GetPhpProperties())
+                {
+                    if (p.IsConstant) yield return p;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets enumeration of runtime fields.
+        /// </summary>
+        public static IEnumerable<PhpPropertyInfo> GetRuntimeProperties(this PhpTypeInfo tinfo, object instance)
+        {
+            var runtimefields = tinfo.GetRuntimeFields(instance);
+            if (runtimefields != null && runtimefields.Count != 0)
+            {
+                using (var enumerator = runtimefields.GetFastEnumerator())
+                {
+                    while (enumerator.MoveNext())
+                    {
+                        yield return new PhpPropertyInfo.RuntimeProperty(tinfo, enumerator.CurrentKey);
+                    }
+                }
+            }
+        }
+
+        #endregion
     }
 }

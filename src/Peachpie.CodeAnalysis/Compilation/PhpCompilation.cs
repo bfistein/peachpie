@@ -19,7 +19,7 @@ using Pchp.CodeAnalysis.Symbols;
 using Microsoft.CodeAnalysis.Collections;
 using System.Collections.Concurrent;
 using Devsense.PHP.Syntax;
-using Pchp.CodeAnalysis.DocGen;
+using Pchp.CodeAnalysis.DocumentationComments;
 
 namespace Pchp.CodeAnalysis
 {
@@ -28,6 +28,8 @@ namespace Pchp.CodeAnalysis
         readonly SourceSymbolCollection _tables;
         MethodSymbol _lazyMainMethod;
         readonly PhpCompilationOptions _options;
+
+        Task<IEnumerable<Diagnostic>> _lazyAnalysisTask;
 
         /// <summary>
         /// Manages anonymous types declared in this compilation. Unifies types that are structurally equivalent.
@@ -86,7 +88,17 @@ namespace Pchp.CodeAnalysis
         /// </summary>
         internal new IAssemblySymbol Assembly => SourceAssembly;
 
-        internal new PhpCompilationOptions Options => _options;
+        public new PhpCompilationOptions Options => _options;
+
+        /// <summary>
+        /// Gets enumeration of all user declared routines (global code, functions, methods and lambdas) in the compilation.
+        /// </summary>
+        public IEnumerable<IPhpRoutineSymbol> UserDeclaredRoutines => this.SourceSymbolCollection.AllRoutines;
+
+        /// <summary>
+        /// Gets enumeration of all user declared types (classes, interfaces and traits) in the compilation.
+        /// </summary>
+        public IEnumerable<IPhpTypeSymbol> UserDeclaredTypes => this.SourceSymbolCollection.GetTypes();
 
         private PhpCompilation(
             string assemblyName,
@@ -108,7 +120,7 @@ namespace Pchp.CodeAnalysis
             _coreMethods = new CoreMethods(_coreTypes);
             _anonymousTypeManager = new AnonymousTypeManager(this);
 
-            _referenceManager = reuseReferenceManager
+            _referenceManager = (reuseReferenceManager && referenceManager != null)
                 ? referenceManager
                 : new ReferenceManager(MakeSourceAssemblySimpleName(), options.AssemblyIdentityComparer, referenceManager?.ObservedMetadata, options.SdkDirectory);
         }
@@ -118,28 +130,44 @@ namespace Pchp.CodeAnalysis
         /// </summary>
         public new PhpCompilation Clone()
         {
-            return Update(_referenceManager, true, this.SyntaxTrees);
+            return Update(reuseReferenceManager: true);
         }
 
         private PhpCompilation Update(
-            ReferenceManager referenceManager,
-            bool reuseReferenceManager,
-            IEnumerable<SyntaxTree> syntaxTrees)
+            string assemblyName = null,
+            PhpCompilationOptions options = null,
+            IEnumerable<MetadataReference> references = null,
+            ReferenceManager referenceManager = null,
+            bool reuseReferenceManager = false,
+            IEnumerable<PhpSyntaxTree> syntaxTrees = null)
         {
             var compilation = new PhpCompilation(
-                this.AssemblyName,
-                _options,
-                this.ExternalReferences,
+                assemblyName ?? this.AssemblyName,
+                options ?? _options,
+                this.ExternalReferences.AddRange((references == null) ? ImmutableArray<MetadataReference>.Empty : references),
                 //this.PreviousSubmission,
                 //this.SubmissionReturnType,
                 //this.HostObjectType,
                 this.IsSubmission,
-                referenceManager,
-                reuseReferenceManager);
+                referenceManager ?? _referenceManager,
+                reuseReferenceManager,
+                EventQueue);
 
-            // compilation.SourceSymbolCollection.AddSyntaxTreeRange(this.SyntaxTrees);
+            compilation.SourceSymbolCollection.AddSyntaxTreeRange(syntaxTrees ?? SyntaxTrees);
 
             return compilation;
+        }
+
+        private PhpCompilation WithPhpSyntaxTrees(IEnumerable<PhpSyntaxTree> syntaxTrees)
+        {
+            return Update(
+                reuseReferenceManager: true,
+                syntaxTrees: syntaxTrees);
+        }
+
+        public PhpCompilation WithPhpOptions(PhpCompilationOptions options)
+        {
+            return Update(options: options);
         }
 
         public override ImmutableArray<MetadataReference> DirectiveReferences
@@ -207,14 +235,6 @@ namespace Pchp.CodeAnalysis
         /// </summary>
         protected override IModuleSymbol CommonSourceModule => this.SourceModule;
 
-        protected override IEnumerable<SyntaxTree> CommonSyntaxTrees
-        {
-            get
-            {
-                throw new NotImplementedException();
-            }
-        }
-
         internal override CommonAnonymousTypeManager CommonAnonymousTypeManager
         {
             get
@@ -241,7 +261,7 @@ namespace Pchp.CodeAnalysis
 
         public static PhpCompilation Create(
             string assemblyName,
-            IEnumerable<SyntaxTree> syntaxTrees = null,
+            IEnumerable<PhpSyntaxTree> syntaxTrees = null,
             IEnumerable<MetadataReference> references = null,
             PhpCompilationOptions options = null)
         {
@@ -255,7 +275,7 @@ namespace Pchp.CodeAnalysis
                 false);
 
             //
-            compilation.SourceSymbolCollection.AddSyntaxTreeRange(syntaxTrees.Cast<PhpSyntaxTree>());
+            compilation.SourceSymbolCollection.AddSyntaxTreeRange(syntaxTrees);
 
             //
             return compilation;
@@ -308,28 +328,109 @@ namespace Pchp.CodeAnalysis
 
         public override INamedTypeSymbol CreateErrorTypeSymbol(INamespaceOrTypeSymbol container, string name, int arity)
         {
-            throw new NotImplementedException();
+            return new MissingMetadataTypeSymbol(name, arity, false);
+        }
+
+        /// <summary>
+        /// The bag in which semantic analysis should deposit its diagnostics.
+        /// </summary>
+        internal DiagnosticBag DeclarationDiagnostics
+        {
+            get
+            {
+                if (_lazyDeclarationDiagnostics == null)
+                {
+                    var diagnostics = new DiagnosticBag();
+                    Interlocked.CompareExchange(ref _lazyDeclarationDiagnostics, diagnostics, null);
+                }
+
+                return _lazyDeclarationDiagnostics;
+            }
+        }
+
+        private DiagnosticBag _lazyDeclarationDiagnostics;
+
+        public override ImmutableArray<Diagnostic> GetParseDiagnostics(CancellationToken cancellationToken = default(CancellationToken))
+        {
+            return GetDiagnostics(CompilationStage.Parse, false, cancellationToken);
         }
 
         public override ImmutableArray<Diagnostic> GetDeclarationDiagnostics(CancellationToken cancellationToken = default(CancellationToken))
         {
-            return ImmutableArray<Diagnostic>.Empty;
-        }
-
-        public override ImmutableArray<Diagnostic> GetDiagnostics(CancellationToken cancellationToken = default(CancellationToken))
-        {
-            throw new NotImplementedException();
+            return GetDiagnostics(CompilationStage.Declare, false, cancellationToken);
         }
 
         public override ImmutableArray<Diagnostic> GetMethodBodyDiagnostics(CancellationToken cancellationToken = default(CancellationToken))
         {
-            throw new NotImplementedException();
+            return GetDiagnostics(CompilationStage.Compile, false, cancellationToken);
         }
 
-        public override ImmutableArray<Diagnostic> GetParseDiagnostics(CancellationToken cancellationToken = default(CancellationToken))
+        public override ImmutableArray<Diagnostic> GetDiagnostics(CancellationToken cancellationToken = default(CancellationToken))
         {
-            //return GetDiagnostics(CompilationStage.Parse, false, cancellationToken);
-            return _tables.GetFiles().SelectMany(file => file.SyntaxTree.Diagnostics).ToImmutableArray();
+            return GetDiagnostics(CompilationStage.Compile, true, cancellationToken);
+        }
+
+        internal ImmutableArray<Diagnostic> GetDiagnostics(CompilationStage stage, bool includeEarlierStages, CancellationToken cancellationToken)
+        {
+            var builder = DiagnosticBag.GetInstance();
+
+            // Parse
+            if (stage == CompilationStage.Parse || (stage > CompilationStage.Parse && includeEarlierStages))
+            {
+                var syntaxTrees = this.SyntaxTrees;
+                if (this.Options.ConcurrentBuild)
+                {
+                    Parallel.ForEach(syntaxTrees, UICultureUtilities.WithCurrentUICulture<PhpSyntaxTree>(syntaxTree =>
+                        {
+                            builder.AddRange(syntaxTree.GetDiagnostics(cancellationToken));
+                        }));
+                }
+                else
+                {
+                    foreach (var syntaxTree in syntaxTrees)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        builder.AddRange(syntaxTree.GetDiagnostics(cancellationToken));
+                    }
+                }
+            }
+
+            // Declare
+            if (stage == CompilationStage.Declare || stage > CompilationStage.Declare && includeEarlierStages)
+            {
+                // CheckAssemblyName(builder);
+                builder.AddRange(Options.Errors);
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                // the set of diagnostics related to establishing references.
+                builder.AddRange(GetBoundReferenceManager().Diagnostics);
+
+                //cancellationToken.ThrowIfCancellationRequested();
+
+                builder.AddRange(this.BindAndAnalyseTask().Result.AsImmutable());   // TODO: cancellationToken
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                builder.AddRange(_lazyDeclarationDiagnostics?.AsEnumerable() ?? Enumerable.Empty<Diagnostic>());
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // Compile
+            if (stage == CompilationStage.Compile || stage > CompilationStage.Compile && includeEarlierStages)
+            {
+                var methodBodyDiagnostics = DiagnosticBag.GetInstance();
+                // TODO: perform compilation and report diagnostics
+                // GetDiagnosticsForAllMethodBodies(methodBodyDiagnostics, cancellationToken); 
+                builder.AddRangeAndFree(methodBodyDiagnostics);
+            }
+
+            // Before returning diagnostics, we filter warnings
+            // to honor the compiler options (e.g., /nowarn, /warnaserror and /warn) and the pragmas.
+            var result = DiagnosticBag.GetInstance();
+            FilterAndAppendAndFreeDiagnostics(result, ref builder);
+            return result.ToReadOnlyAndFree<Diagnostic>();
         }
 
         public override IEnumerable<ISymbol> GetSymbolsWithName(Func<string, bool> predicate, SymbolFilter filter = SymbolFilter.TypeAndMember, CancellationToken cancellationToken = default(CancellationToken))
@@ -397,19 +498,9 @@ namespace Pchp.CodeAnalysis
                 );
         }
 
-        protected override Compilation CommonAddSyntaxTrees(IEnumerable<SyntaxTree> trees)
-        {
-            throw new NotImplementedException();
-        }
-
         protected override Compilation CommonClone()
         {
-            throw new NotImplementedException();
-        }
-
-        protected override bool CommonContainsSyntaxTree(SyntaxTree syntaxTree)
-        {
-            throw new NotImplementedException();
+            return Clone();
         }
 
         protected override IArrayTypeSymbol CommonCreateArrayTypeSymbol(ITypeSymbol elementType, int rank)
@@ -419,7 +510,7 @@ namespace Pchp.CodeAnalysis
 
         protected override IPointerTypeSymbol CommonCreatePointerTypeSymbol(ITypeSymbol elementType)
         {
-            throw new NotImplementedException();
+            return new PointerTypeSymbol((TypeSymbol)elementType);
         }
 
         protected override ISymbol CommonGetAssemblyOrModuleSymbol(MetadataReference reference)
@@ -460,7 +551,7 @@ namespace Pchp.CodeAnalysis
 
                 // "Function"
                 var func = this.SourceSymbolCollection.GetFunction(NameUtils.MakeQualifiedName(maintype, true));
-                if (func != null)
+                if (!func.IsErrorMethod())
                     return func;
 
                 // Method
@@ -492,42 +583,89 @@ namespace Pchp.CodeAnalysis
             return null;
         }
 
+        protected override IEnumerable<SyntaxTree> CommonSyntaxTrees => SyntaxTrees;
+
+        public new IEnumerable<PhpSyntaxTree> SyntaxTrees => this.SourceSymbolCollection.SyntaxTrees;
+
+        protected override bool CommonContainsSyntaxTree(SyntaxTree syntaxTree)
+        {
+            return this.SyntaxTrees.Contains(syntaxTree);
+        }
+
         protected override SemanticModel CommonGetSemanticModel(SyntaxTree syntaxTree, bool ignoreAccessibility)
         {
             throw new NotImplementedException();
         }
 
+        protected override Compilation CommonAddSyntaxTrees(IEnumerable<SyntaxTree> trees)
+        {
+            return WithPhpSyntaxTrees(this.SyntaxTrees.Concat(trees.Cast<PhpSyntaxTree>()));
+        }
+
         protected override Compilation CommonRemoveAllSyntaxTrees()
         {
-            return Update(
-                _referenceManager,
-                reuseReferenceManager: true,
-                syntaxTrees: ImmutableArray<SyntaxTree>.Empty);
+            return WithPhpSyntaxTrees(ImmutableArray<PhpSyntaxTree>.Empty);
         }
 
         protected override Compilation CommonRemoveSyntaxTrees(IEnumerable<SyntaxTree> trees)
         {
-            throw new NotImplementedException();
+            return WithPhpSyntaxTrees(this.SyntaxTrees.Except(trees.OfType<PhpSyntaxTree>()));
         }
 
         protected override Compilation CommonReplaceSyntaxTree(SyntaxTree oldTree, SyntaxTree newTree)
         {
-            throw new NotImplementedException();
+            if (oldTree == null)
+            {
+                throw new ArgumentNullException(nameof(oldTree));
+            }
+
+            if (newTree == null)
+            {
+                return this.RemoveSyntaxTrees(oldTree);
+            }
+
+            if (newTree == oldTree)
+            {
+                return this;
+            }
+
+            if (!ContainsSyntaxTree(oldTree))
+            {
+                throw new KeyNotFoundException();
+            }
+
+            return WithPhpSyntaxTrees(SyntaxTrees.Select(t => (t == oldTree) ? (PhpSyntaxTree)newTree : t));
+        }
+
+        internal override int GetSyntaxTreeOrdinal(SyntaxTree tree)
+        {
+            Debug.Assert(this.ContainsSyntaxTree(tree));
+            return SourceSymbolCollection.OrdinalMap[tree];
         }
 
         protected override Compilation CommonWithAssemblyName(string outputName)
         {
-            throw new NotImplementedException();
+            if (this.AssemblyName == outputName)
+            {
+                return this;
+            }
+
+            return Update(assemblyName: outputName);
         }
 
         protected override Compilation CommonWithOptions(CompilationOptions options)
         {
-            throw new NotImplementedException();
+            if (!(options is PhpCompilationOptions))
+            {
+                throw ExceptionUtilities.UnexpectedValue(options);
+            }
+
+            return WithPhpOptions((PhpCompilationOptions)options);
         }
 
         protected override Compilation CommonWithReferences(IEnumerable<MetadataReference> newReferences)
         {
-            throw new NotImplementedException();
+            return Update(references: newReferences);
         }
 
         protected override Compilation CommonWithScriptCompilationInfo(ScriptCompilationInfo info)
@@ -551,7 +689,10 @@ namespace Pchp.CodeAnalysis
         {
             if (_lazyAssemblySymbol == null)
             {
-                _lazyAssemblySymbol = _referenceManager.CreateSourceAssemblyForCompilation(this);
+                lock (_referenceManager)
+                {
+                    _lazyAssemblySymbol = _referenceManager.CreateSourceAssemblyForCompilation(this);
+                }
                 Debug.Assert(_lazyAssemblySymbol != null);
             }
 
@@ -577,6 +718,20 @@ namespace Pchp.CodeAnalysis
             }
 
             return loc1.SourceSpan.Start - loc2.SourceSpan.Start;
+        }
+
+        /// <summary>
+        /// Ensures semantic binding and flow analysis.
+        /// </summary>
+        /// <returns>The result of the task contains enumeration of diagnostics.</returns>
+        public async Task<IEnumerable<Diagnostic>> BindAndAnalyseTask()
+        {
+            if (_lazyAnalysisTask == null)
+            {
+                _lazyAnalysisTask = Task.Run(() => SourceCompiler.BindAndAnalyze(this));
+            }
+
+            return await _lazyAnalysisTask;
         }
 
         internal override bool CompileImpl(CommonPEModuleBuilder moduleBuilder, Stream win32Resources, Stream xmlDocStream, bool emittingPdb, DiagnosticBag diagnostics, Predicate<ISymbol> filterOpt, CancellationToken cancellationToken)
@@ -620,7 +775,7 @@ namespace Pchp.CodeAnalysis
             {
                 return false;
             }
-        
+
             cancellationToken.ThrowIfCancellationRequested();
 
             // Use a temporary bag so we don't have to refilter pre-existing diagnostics.
@@ -628,7 +783,7 @@ namespace Pchp.CodeAnalysis
 
             string assemblyName = FileNameUtilities.ChangeExtension(moduleBeingBuilt.EmitOptions.OutputNameOverride, extension: null);
             DocumentationCommentCompiler.WriteDocumentationCommentXml(this, assemblyName, xmlDocStream, xmlDiagnostics, cancellationToken);
-            
+
             if (!FilterAndAppendAndFreeDiagnostics(diagnostics, ref xmlDiagnostics))
             {
                 return false;
@@ -727,7 +882,7 @@ namespace Pchp.CodeAnalysis
         internal override CommonPEModuleBuilder CreateModuleBuilder(EmitOptions emitOptions, IMethodSymbol debugEntryPoint, IEnumerable<ResourceDescription> manifestResources, CompilationTestData testData, DiagnosticBag diagnostics, CancellationToken cancellationToken)
         {
             Debug.Assert(!IsSubmission || HasCodeToEmit());
-            
+
             var runtimeMDVersion = GetRuntimeMetadataVersion(emitOptions, diagnostics);
             if (runtimeMDVersion == null)
             {
@@ -823,11 +978,6 @@ namespace Pchp.CodeAnalysis
             }
 
             return !hasError;
-        }
-
-        internal override int GetSyntaxTreeOrdinal(SyntaxTree tree)
-        {
-            throw new NotImplementedException();
         }
 
         internal override bool HasCodeToEmit()

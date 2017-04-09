@@ -91,169 +91,80 @@ namespace Pchp.Core.Reflection
         #endregion
 
         /// <summary>
-        /// Gets value indicating the class contains a field with specified name.
+        /// Gets enumeration of class instance fields excluding eventual <c>__runtime_fields</c>.
         /// </summary>
-        public FieldKind HasField(string name)
+        public IEnumerable<FieldInfo> InstanceFields => (_fields != null) ? _fields.Values.Where(_isInstanceField) : Array.Empty<FieldInfo>();
+
+        /// <summary>
+        /// Enumerates all the properties in the class excluding runtime fields.
+        /// </summary>
+        public IEnumerable<PhpPropertyInfo> GetPhpProperties()
+        {
+            IEnumerable<PhpPropertyInfo> result = Enumerable.Empty<PhpPropertyInfo>();
+
+            //
+            if (_fields != null)
+            {
+                result = _fields.Values.Select(fld => new PhpPropertyInfo.ClrFieldProperty(fld.DeclaringType.GetPhpTypeInfo(), fld));
+            }
+
+            //
+            if (_staticsFields != null)
+            {
+                result = result.Concat(_staticsFields.Values.Select(
+                    fld =>
+                    {
+                        var __statics = fld.DeclaringType;
+                        return new PhpPropertyInfo.ContainedClrField(__statics.DeclaringType.GetPhpTypeInfo(), EnsureStaticsGetter(__statics), fld);
+                    }
+                ));
+            }
+
+            //
+            if (_properties != null)
+            {
+                result = result.Concat(_properties.Values.Select(p => new PhpPropertyInfo.ClrProperty(p.DeclaringType.GetPhpTypeInfo(), p)));
+            }
+
+            //
+            return result;
+        }
+
+        /// <summary>
+        /// Obtains the PHP property descriptor matching given name.
+        /// The enumeration includes instance fields, static fields, CLR properties and class constants
+        /// </summary>
+        /// <returns>
+        /// Instance of <see cref="PhpPropertyInfo"/> describing the property/field/constant.
+        /// Can be <c>null</c> if specified property is not declared on current type.
+        /// </returns>
+        /// <remarks>The method return <c>null</c> in case the property is a runtime property. This case has to be handled separately.</remarks>
+        public IEnumerable<PhpPropertyInfo> GetPhpProperties(string name)
         {
             FieldInfo fld;
 
             //
             if (_fields != null && _fields.TryGetValue(name, out fld))
             {
-                if (fld.IsPublic && fld.IsLiteral) return FieldKind.Constant;
-
-                if (fld.IsStatic) return FieldKind.StaticField;
-
-                return FieldKind.InstanceField;
+                yield return new PhpPropertyInfo.ClrFieldProperty(fld.DeclaringType.GetPhpTypeInfo(), fld);
             }
 
             //
             if (_staticsFields != null && _staticsFields.TryGetValue(name, out fld))
             {
-                return fld.IsInitOnly ? FieldKind.Constant : FieldKind.StaticField;
+                var __statics = fld.DeclaringType;
+                yield return new PhpPropertyInfo.ContainedClrField(__statics.DeclaringType.GetPhpTypeInfo(), EnsureStaticsGetter(__statics), fld);
             }
 
             //
             PropertyInfo p;
             if (_properties != null && _properties.TryGetValue(name, out p))
             {
-                return p.GetMethod.IsStatic ? FieldKind.StaticField : FieldKind.InstanceField;
+                yield return new PhpPropertyInfo.ClrProperty(p.DeclaringType.GetPhpTypeInfo(), p);
             }
 
             //
-            return FieldKind.Undefined;
-        }
-
-        /// <summary>
-        /// Resolves a constant value in given context.
-        /// </summary>
-        public object GetConstantValue(Context ctx, string name)
-        {
-            if (ctx == null)
-            {
-                throw new ArgumentNullException("ctx");
-            }
-
-            FieldInfo fld;
-
-            // fields
-            if (_fields != null && _fields.TryGetValue(name, out fld))
-            {
-                if (fld.IsPublic && fld.IsLiteral)
-                {
-                    return fld.GetValue(null);
-                }
-            }
-
-            // __statics.fields
-            if (_staticsFields != null && _staticsFields.TryGetValue(name, out fld))
-            {
-                if (fld.IsPublic && fld.IsInitOnly)
-                {
-                    return fld.GetValue(EnsureStaticsGetter(fld.DeclaringType)(ctx));  // Context.GetStatics<_statics>().FIELD
-                }
-            }
-
-            throw new ArgumentException();
-        }
-
-        public enum FieldKind
-        {
-            Undefined,
-
-            InstanceField,
-            StaticField,
-            Constant,
-        }
-
-        /// <summary>
-        /// Gets <see cref="Expression"/> representing field value.
-        /// </summary>
-        /// <param name="name">Class constant name.</param>
-        /// <param name="classCtx">Current class context. Can be <c>null</c>.</param>
-        /// <param name="target">Expression representing self instance.</param>
-        /// <param name="ctx">Expression representing current <see cref="Context"/>.</param>
-        /// <param name="kind">Field kind.</param>
-        /// <returns><see cref="Expression"/> instance or <c>null</c> if constant does not exist.</returns>
-        internal Expression Bind(string name, Type classCtx, Expression target, Expression ctx, FieldKind kind)
-        {
-            FieldInfo fld;
-
-            //
-            if (_fields != null && _fields.TryGetValue(name, out fld) && TypeMembersUtils.IsVisible(fld, classCtx))
-            {
-                if (fld.IsPublic && fld.IsLiteral)
-                {
-                    if (kind == FieldKind.Constant)
-                    {
-                        return Expression.Constant(fld.GetValue(null));
-                    }
-                }
-
-                if (fld.IsStatic)
-                {
-                    if (kind == FieldKind.InstanceField)
-                    {
-                        // TODO: Err: static field accessed with instance
-                    }
-                    return Expression.Field(null, fld);
-                }
-
-                if (kind == FieldKind.InstanceField)
-                {
-                    Debug.Assert(target != null);
-                    return Expression.Field(target, fld);
-                }
-            }
-
-            //
-            if (kind != FieldKind.InstanceField && _staticsFields != null && _staticsFields.TryGetValue(name, out fld))
-            {
-                if ((kind == FieldKind.Constant && fld.IsInitOnly) ||
-                    (kind == FieldKind.StaticField))
-                {
-                    Debug.Assert(target == null);
-                    Debug.Assert(ctx != null);
-
-                    // Context.GetStatics<_statics>().FIELD
-                    var getstatics = BinderHelpers.GetStatic_T_Method(fld.DeclaringType);
-                    return Expression.Field(Expression.Call(ctx, getstatics), fld);
-                }
-            }
-
-            //
-            PropertyInfo p;
-            if (kind != FieldKind.Constant && _properties != null && _properties.TryGetValue(name, out p))
-            {
-                var isstatic = p.GetMethod.IsStatic;
-                if ((kind == FieldKind.StaticField) == isstatic)
-                {
-                    Debug.Assert((target == null) == isstatic);
-                    return Expression.Property(target, p);
-                }
-            }
-
-            //
-            return null;
-        }
-
-        /// <summary>
-        /// Gets enumeration of class instance fields excluding eventual <c>__runtime_fields</c>.
-        /// </summary>
-        public IEnumerable<FieldInfo> InstanceFields => (_fields != null) ? _fields.Values.Where(_isInstanceField) : Array.Empty<FieldInfo>();
-
-        /// <summary>
-        /// Gets an instance field with given name declared on this type, or <c>null</c>.
-        /// </summary>
-        public FieldInfo TryGetInstanceField(string name)
-        {
-            FieldInfo fld;
-            if (_fields != null && _fields.TryGetValue(name, out fld) && !fld.IsStatic)
-            {
-                return fld;
-            }
-
-            return null;
+            yield break;
         }
     }
 }

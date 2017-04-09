@@ -39,10 +39,16 @@ namespace Pchp.CodeAnalysis.Semantics.Model
             _next = new SourceSymbolProvider(compilation.SourceSymbolCollection);
         }
 
+        static IEnumerable<PEAssemblySymbol> GetExtensionLibraries(PhpCompilation compilation)
+            => compilation
+            .GetBoundReferenceManager()
+            .ExplicitReferencesSymbols
+            .OfType<PEAssemblySymbol>()
+            .Where(s => s.IsExtensionLibrary);
+
         internal static ImmutableArray<NamedTypeSymbol> ResolveExtensionContainers(PhpCompilation compilation)
         {
-            return compilation.GetBoundReferenceManager()
-                .ExplicitReferencesSymbols.OfType<PEAssemblySymbol>().Where(s => s.IsExtensionLibrary)
+            return GetExtensionLibraries(compilation)
                 .SelectMany(r => r.ExtensionContainers)
                 .ToImmutableArray();
         }
@@ -79,15 +85,25 @@ namespace Pchp.CodeAnalysis.Semantics.Model
             {
                 if (_lazyExportedTypes == null)
                 {
-                    var alltypes = _compilation.GetBoundReferenceManager()
-                        .ExplicitReferencesSymbols.OfType<PEAssemblySymbol>()
-                        .Where(s => s.IsExtensionLibrary)
-                        .SelectMany(s => s.PrimaryModule.GlobalNamespace.GetTypeMembers().OfType<NamedTypeSymbol>())
-                        .Where(t => t.DeclaredAccessibility == Accessibility.Public);
+                    var result = new Dictionary<QualifiedName, NamedTypeSymbol>();
 
-                    _lazyExportedTypes = alltypes
-                        .Where(t => ((PENamedTypeSymbol)t).IsPhpTypeName())
-                        .ToDictionary(t => ((PENamedTypeSymbol)t).FullName);
+                    foreach (var lib in GetExtensionLibraries(_compilation))
+                    {
+                        foreach (var t in lib.PrimaryModule.GlobalNamespace.GetTypeMembers().OfType<PENamedTypeSymbol>())
+                        {
+                            if (t.DeclaredAccessibility == Accessibility.Public)
+                            {
+                                var qname = t.GetPhpTypeNameOrNull();
+                                if (!qname.IsEmpty())
+                                {
+                                    result[qname] = t;
+                                }
+                            }
+                        }
+                    }
+                    
+                    //
+                    _lazyExportedTypes = result;
                 }
 
                 return _lazyExportedTypes;
@@ -105,6 +121,7 @@ namespace Pchp.CodeAnalysis.Semantics.Model
                 {
                     _lazyStdTypes = Core.std.StdTable.Types
                         .Select(tname => _compilation.PhpCorLibrary.GetTypeByMetadataName(tname))
+                        .Where(t => t != null)
                         .ToDictionary(t => ((IPhpTypeSymbol)t).FullName);
                 }
 
@@ -168,17 +185,28 @@ namespace Pchp.CodeAnalysis.Semantics.Model
             return _next.GetFile(path);
         }
 
-        public IEnumerable<IPhpRoutineSymbol> ResolveFunction(QualifiedName name)
+        public IPhpRoutineSymbol ResolveFunction(QualifiedName name)
         {
             // library functions, public static methods
-            var result = ExtensionContainers.SelectMany(r => r.GetMembers(name.ClrName(), true)).OfType<MethodSymbol>().Where(IsFunction).OfType<IPhpRoutineSymbol>().ToList();
-            if (result.Count == 0)
+            var methods = new List<MethodSymbol>();
+            foreach (var m in ExtensionContainers.SelectMany(r => r.GetMembers(name.ClrName(), true)).OfType<MethodSymbol>().Where(IsFunction))
             {
-                // source functions
-                result.AddRange(_next.ResolveFunction(name));
+                methods.Add(m);
             }
 
-            return result;
+            if (methods.Count == 0)
+            {
+                // source functions
+                return _next.ResolveFunction(name);
+            }
+            else if (methods.Count == 1)
+            {
+                return methods[0];
+            }
+            else
+            {
+                return new AmbiguousMethodSymbol(methods.AsImmutable(), true);
+            }
         }
 
         public IPhpValue ResolveConstant(string name)

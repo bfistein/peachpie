@@ -25,6 +25,10 @@ namespace Pchp.CodeAnalysis.Symbols
 
         public override int Arity => 0;
 
+        internal override bool HasTypeArgumentsCustomModifiers => false;
+
+        public override ImmutableArray<CustomModifier> GetTypeArgumentCustomModifiers(int ordinal) => GetEmptyTypeArgumentCustomModifiers(ordinal);
+
         public override TypeKind TypeKind => TypeKind.Error;
 
         public override SymbolKind Kind => SymbolKind.ErrorType;
@@ -53,8 +57,6 @@ namespace Pchp.CodeAnalysis.Symbols
         internal override TypeLayout Layout => default(TypeLayout);
 
         public override Symbol ContainingSymbol => null;
-
-        public override ImmutableArray<Location> Locations => ImmutableArray<Location>.Empty;
 
         public override ImmutableArray<SyntaxReference> DeclaringSyntaxReferences => ImmutableArray<SyntaxReference>.Empty;
 

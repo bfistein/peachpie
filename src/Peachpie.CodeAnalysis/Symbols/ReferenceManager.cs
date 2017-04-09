@@ -32,6 +32,16 @@ namespace Pchp.CodeAnalysis
             readonly string _sdkdir;
 
             /// <summary>
+            /// Diagnostics produced during reference resolution and binding.
+            /// </summary>
+            /// <remarks>
+            /// When reporting diagnostics be sure not to include any information that can't be shared among 
+            /// compilations that share the same reference manager (such as full identity of the compilation, 
+            /// simple assembly name is ok).
+            /// </remarks>
+            private readonly DiagnosticBag _diagnostics = new DiagnosticBag();
+
+            /// <summary>
             /// COR library containing base system types.
             /// </summary>
             internal AssemblySymbol CorLibrary => _lazyCorLibrary;
@@ -67,7 +77,9 @@ namespace Pchp.CodeAnalysis
             }
 
             internal IEnumerable<IAssemblySymbol> ExplicitReferencesSymbols => ExplicitReferences.Select(r => _referencesMap[r]).WhereNotNull();
-            
+
+            internal DiagnosticBag Diagnostics => _diagnostics;
+
             public ReferenceManager(
                 string simpleAssemblyName,
                 AssemblyIdentityComparer identityComparer,
@@ -80,7 +92,7 @@ namespace Pchp.CodeAnalysis
                 _observedMetadata = observedMetadata ?? new Dictionary<AssemblyIdentity, PEAssemblySymbol>();
             }
 
-            PEAssemblySymbol CreateAssemblyFromIdentity(MetadataReferenceResolver resolver, AssemblyIdentity identity, string basePath, List<PEModuleSymbol> modules)
+            AssemblySymbol CreateAssemblyFromIdentity(MetadataReferenceResolver resolver, AssemblyIdentity identity, string basePath, List<PEModuleSymbol> modules)
             {
                 PEAssemblySymbol ass;
                 if (!_observedMetadata.TryGetValue(identity, out ass))
@@ -104,14 +116,14 @@ namespace Pchp.CodeAnalysis
                     var pe = pes.FirstOrDefault();
                     if (pe != null)
                     {
-                        _observedMetadata[identity] = ass = PEAssemblySymbol.Create(pe);
+                        _observedMetadata[identity] = ass = PEAssemblySymbol.Create(pe, isLinked: false);
                         ass.SetCorLibrary(_lazyCorLibrary);
                         modules.AddRange(ass.Modules.Cast<PEModuleSymbol>());
                     }
                     else
                     {
-                        // TODO: diagnostics
-                        throw new DllNotFoundException(identity.GetDisplayName());
+                        //_diagnostics.Add(Location.None, Errors.ErrorCode.ERR_MetadataFileNotFound, identity);
+                        return new MissingAssemblySymbol(identity);
                     }
                 }
 
@@ -122,6 +134,12 @@ namespace Pchp.CodeAnalysis
             {
                 for (int i = 0; i < modules.Count; i++)
                 {
+                    if (modules[i].HasReferencesSet)
+                    {
+                        // module is already cached with references set
+                        continue;
+                    }
+
                     var refs = modules[i].Module.ReferencedAssemblies;
                     var symbols = new AssemblySymbol[refs.Length];
                     var ass = modules[i].ContainingAssembly;
@@ -145,75 +163,99 @@ namespace Pchp.CodeAnalysis
                     return compilation._lazyAssemblySymbol;
                 }
 
-                // TODO: lock
-
-                Debug.Assert(_lazyExplicitReferences.IsDefault);
-                
                 var resolver = compilation.Options.MetadataReferenceResolver;
                 var moduleName = compilation.MakeSourceModuleName();
 
-                //
-                var externalRefs = compilation.ExternalReferences;
-                var assemblies = new List<AssemblySymbol>(externalRefs.Length);
+                var assemblies = new List<AssemblySymbol>();
 
-                var referencesMap = new Dictionary<MetadataReference, IAssemblySymbol>();
-                var metadataMap = new Dictionary<IAssemblySymbol, MetadataReference>();
-                var assembliesMap = new Dictionary<AssemblyIdentity, PEAssemblySymbol>();
-
-                var refmodules = new List<PEModuleSymbol>();
-                
-                foreach (PortableExecutableReference pe in externalRefs)
+                if (_lazyExplicitReferences.IsDefault)
                 {
-                    var peass = ((AssemblyMetadata)pe.GetMetadata()).GetAssembly();
-                    
-                    var symbol = _observedMetadata.TryGetOrDefault(peass.Identity) ?? PEAssemblySymbol.Create(pe, peass);
-                    if (symbol != null)
+                    //
+                    var externalRefs = compilation.ExternalReferences;
+                    var referencesMap = new Dictionary<MetadataReference, IAssemblySymbol>();
+                    var metadataMap = new Dictionary<IAssemblySymbol, MetadataReference>();
+                    var assembliesMap = new Dictionary<AssemblyIdentity, PEAssemblySymbol>();
+                    var observed = new HashSet<AssemblyIdentity>();
+
+                    foreach (PortableExecutableReference pe in externalRefs)
                     {
-                        assemblies.Add(symbol);
-                        referencesMap[pe] = symbol;
-                        metadataMap[symbol] = pe;
+                        var peass = ((AssemblyMetadata)pe.GetMetadata()).GetAssembly();
 
-                        if (_lazyCorLibrary == null && symbol.IsCorLibrary)
-                            _lazyCorLibrary = symbol;
+                        if (!observed.Add(peass.Identity))
+                        {
+                            // already added reference identity, different metadata
+                            referencesMap[pe] = _observedMetadata[peass.Identity];
+                            Debug.Assert(referencesMap[pe] != null);
+                            continue;
+                        }
 
-                        if (_lazyPhpCorLibrary == null && symbol.IsPchpCorLibrary)
-                            _lazyPhpCorLibrary = symbol;
+                        var symbol = _observedMetadata.TryGetOrDefault(peass.Identity) ?? PEAssemblySymbol.Create(pe, peass, isLinked: true);
+                        if (symbol != null)
+                        {
+                            assemblies.Add(symbol);
+                            referencesMap[pe] = symbol;
+                            metadataMap[symbol] = pe;
 
-                        // cache bound assembly symbol
-                        _observedMetadata[symbol.Identity] = symbol;
+                            if (_lazyCorLibrary == null && symbol.IsCorLibrary)
+                                _lazyCorLibrary = symbol;
 
-                        // list of modules to initialize later
-                        refmodules.AddRange(symbol.Modules.Cast<PEModuleSymbol>());
+                            if (_lazyPhpCorLibrary == null && symbol.IsPchpCorLibrary)
+                                _lazyPhpCorLibrary = symbol;
+
+                            // cache bound assembly symbol
+                            _observedMetadata[symbol.Identity] = symbol;
+                        }
+                        else
+                        {
+                            _diagnostics.Add(Location.None, Errors.ErrorCode.ERR_MetadataFileNotFound, peass.Identity);
+                        }
                     }
-                    else
+
+                    // list of modules to initialize later
+                    var refmodules = assemblies.SelectMany(symbol => symbol.Modules.Cast<PEModuleSymbol>()).ToList();
+
+                    //
+                    _lazyExplicitReferences = externalRefs;
+                    _lazyImplicitReferences = ImmutableArray<MetadataReference>.Empty;
+                    _metadataMap = metadataMap.ToImmutableDictionary();
+                    _referencesMap = referencesMap.ToImmutableDictionary();
+
+                    //
+                    assemblies.ForEach(ass => ass.SetCorLibrary(_lazyCorLibrary));
+
+                    // recursively initialize references of referenced modules
+                    SetReferencesOfReferencedModules(resolver, refmodules);
+                }
+                else
+                {
+                    foreach (PortableExecutableReference pe in _lazyExplicitReferences)
                     {
-                        throw new Exception($"symbol '{pe.FilePath}' could not be created!");
+                        var ass = (AssemblySymbol)_referencesMap[pe];
+                        Debug.Assert(ass != null);
+                        assemblies.Add(ass);
                     }
                 }
 
                 //
-                _lazyExplicitReferences = externalRefs;
-                _lazyImplicitReferences = ImmutableArray<MetadataReference>.Empty;
-                _metadataMap = metadataMap.ToImmutableDictionary();
-                _referencesMap = referencesMap.ToImmutableDictionary();
-
-                //
                 var assembly = new SourceAssemblySymbol(compilation, this.SimpleAssemblyName, moduleName);
 
-                assembly.SetCorLibrary(_lazyCorLibrary);                
+                assembly.SetCorLibrary(_lazyCorLibrary);
                 assembly.SourceModule.SetReferences(new ModuleReferences<AssemblySymbol>(
                     assemblies.Select(x => x.Identity).AsImmutable(),
                     assemblies.AsImmutable(),
                     ImmutableArray<UnifiedAssembly<AssemblySymbol>>.Empty), assembly);
 
-                assemblies.ForEach(ass => ass.SetCorLibrary(_lazyCorLibrary));
-
-                // recursively initialize references of referenced modules
-                SetReferencesOfReferencedModules(resolver, refmodules);
-
                 // set cor types for this compilation
-                if (_lazyPhpCorLibrary == null) throw new DllNotFoundException("Peachpie.Runtime not found");
-                if (_lazyCorLibrary == null) throw new DllNotFoundException("A corlib not found");
+                if (_lazyPhpCorLibrary == null)
+                {
+                    _diagnostics.Add(Location.None, Errors.ErrorCode.ERR_MetadataFileNotFound, "Peachpie.Runtime.dll");
+                    throw new DllNotFoundException("Peachpie.Runtime not found");
+                }
+                if (_lazyCorLibrary == null)
+                {
+                    throw new DllNotFoundException("A corlib not found");
+                }
+
                 compilation.CoreTypes.Update(_lazyPhpCorLibrary);
                 compilation.CoreTypes.Update(_lazyCorLibrary);
 

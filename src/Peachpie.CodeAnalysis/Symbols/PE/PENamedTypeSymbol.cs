@@ -12,6 +12,8 @@ using System.Collections.Immutable;
 using Microsoft.CodeAnalysis.Collections;
 using System.Threading;
 using Devsense.PHP.Syntax;
+using System.Globalization;
+using Pchp.CodeAnalysis.DocumentationComments;
 
 namespace Pchp.CodeAnalysis.Symbols
 {
@@ -32,7 +34,7 @@ namespace Pchp.CodeAnalysis.Symbols
                 var phpname = this.GetPhpTypeNameOrNull();
                 if (phpname.IsEmpty())
                 {
-                    phpname = new QualifiedName(new Name(_name), _ns.Split('.').Select(s => new Name(s)).ToArray(), true);
+                    phpname = this.MakeQualifiedName();
                 }
 
                 return phpname;
@@ -44,14 +46,14 @@ namespace Pchp.CodeAnalysis.Symbols
         /// A field holding a reference to current runtime context.
         /// Is of type <see cref="Pchp.Core.Context"/>.
         /// </summary>
-        public FieldSymbol ContextStore
+        public IFieldSymbol ContextStore
         {
             get
             {
                 if (!this.IsStatic)
                 {
                     // resolve <ctx> field
-                    var candidates = this.GetMembers(SpecialParameterSymbol.ContextName)
+                    var candidates = this.GetMembers(SpecialParameterSymbol.ContextName)    // TODO: _ctx, __ctx
                         .OfType<FieldSymbol>()
                         .Where(f => f.DeclaredAccessibility == Accessibility.Protected && !f.IsStatic && f.Type.MetadataName == "Context")
                         .ToList();
@@ -72,7 +74,7 @@ namespace Pchp.CodeAnalysis.Symbols
         /// A field holding array of the class runtime fields.
         /// Is of type <see cref="Pchp.Core.PhpArray"/>.
         /// </summary>
-        public FieldSymbol RuntimeFieldsStore
+        public IFieldSymbol RuntimeFieldsStore
         {
             get
             {
@@ -102,13 +104,13 @@ namespace Pchp.CodeAnalysis.Symbols
         /// <summary>
         /// Optional. A <c>.ctor</c> that ensures the initialization of the class without calling the type PHP constructor.
         /// </summary>
-        public MethodSymbol InstanceConstructorFieldsOnly => InstanceConstructors.Where(MethodSymbolExtensions.IsFieldsOnlyConstructor).SingleOrDefault();
+        public IMethodSymbol InstanceConstructorFieldsOnly => InstanceConstructors.Where(MethodSymbolExtensions.IsFieldsOnlyConstructor).SingleOrDefault();
 
         /// <summary>
         /// Optional.
         /// A nested class <c>__statics</c> containing class static fields and constants which are bound to runtime context.
         /// </summary>
-        public NamedTypeSymbol StaticsContainer
+        public INamedTypeSymbol StaticsContainer
         {
             get
             {
@@ -482,6 +484,8 @@ namespace Pchp.CodeAnalysis.Symbols
 
         NamedTypeSymbol _lazyUnderlayingType;
 
+        private Tuple<CultureInfo, string> _lazyDocComment;
+
         private NamedTypeSymbol _lazyDeclaredBaseType = ErrorTypeSymbol.UnknownResultType;
         private ImmutableArray<NamedTypeSymbol> _lazyDeclaredInterfaces = default(ImmutableArray<NamedTypeSymbol>);
 
@@ -638,6 +642,10 @@ namespace Pchp.CodeAnalysis.Symbols
         public override string Name => _name;
 
         public override string NamespaceName => _ns;
+
+        internal override bool HasTypeArgumentsCustomModifiers => false;
+
+        public override ImmutableArray<CustomModifier> GetTypeArgumentCustomModifiers(int ordinal) => GetEmptyTypeArgumentCustomModifiers(ordinal);
 
         internal PEModuleSymbol ContainingPEModule
         {
@@ -904,7 +912,10 @@ namespace Pchp.CodeAnalysis.Symbols
             ImmutableArray<Symbol> m;
             if (!_lazyMembersByName.TryGetValue(name, out m))
             {
-                m = ImmutableArray<Symbol>.Empty;
+                if (!ignoreCase || !_lazyMembersByName.TryGetValue(name.ToLowerInvariant(), out m))
+                {
+                    m = ImmutableArray<Symbol>.Empty;
+                }
             }
 
             // nested types are not common, but we need to check just in case
@@ -1524,6 +1535,11 @@ namespace Pchp.CodeAnalysis.Symbols
 
                 return _lazyKind;
             }
+        }
+
+        public override string GetDocumentationCommentXml(CultureInfo preferredCulture = null, bool expandIncludes = false, CancellationToken cancellationToken = default(CancellationToken))
+        {
+            return PEDocumentationCommentUtils.GetDocumentationComment(this, ContainingPEModule, preferredCulture, cancellationToken, ref _lazyDocComment);
         }
     }
 }

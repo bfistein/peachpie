@@ -60,6 +60,24 @@ namespace Pchp.CodeAnalysis.Errors {
         }
         
         /// <summary>
+        ///    Looks up a localized string similar to Circular base class dependency involving &apos;{0}&apos; and &apos;{1}&apos;.
+        /// </summary>
+        public static string ERR_CircularBase {
+            get {
+                return ResourceManager.GetString("ERR_CircularBase", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///    Looks up a localized string similar to Error opening assembly file &apos;{0}&apos;: {1}.
+        /// </summary>
+        public static string ERR_ErrorOpeningAssemblyFile {
+            get {
+                return ResourceManager.GetString("ERR_ErrorOpeningAssemblyFile", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///    Looks up a localized string similar to Metadata file &apos;{0}&apos; could not be found.
         /// </summary>
         public static string ERR_MetadataFileNotFound {
@@ -69,11 +87,47 @@ namespace Pchp.CodeAnalysis.Errors {
         }
         
         /// <summary>
-        ///    Looks up a localized string similar to Calling undefined function &apos;{0}&apos;.
+        ///    Looks up a localized string similar to Type name &apos;{0}&apos; could not be resolved. It is either not defined, defined conditionally or ambiguous declarations were found..
+        /// </summary>
+        public static string ERR_TypeNameCannotBeResolved {
+            get {
+                return ResourceManager.GetString("ERR_TypeNameCannotBeResolved", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///    Looks up a localized string similar to Call to undefined function: &apos;{0}&apos;.
         /// </summary>
         public static string WRN_UndefinedFunctionCall {
             get {
                 return ResourceManager.GetString("WRN_UndefinedFunctionCall", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///    Looks up a localized string similar to Call to undefined method: {0}::{1}().
+        /// </summary>
+        public static string WRN_UndefinedMethodCall {
+            get {
+                return ResourceManager.GetString("WRN_UndefinedMethodCall", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///    Looks up a localized string similar to Class &apos;{0}&apos; not found.
+        /// </summary>
+        public static string WRN_UndefinedType {
+            get {
+                return ResourceManager.GetString("WRN_UndefinedType", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///    Looks up a localized string similar to Undefined variable: ${0}.
+        /// </summary>
+        public static string WRN_UninitializedVariableUse {
+            get {
+                return ResourceManager.GetString("WRN_UninitializedVariableUse", resourceCulture);
             }
         }
     }

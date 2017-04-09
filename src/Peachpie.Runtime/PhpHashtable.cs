@@ -189,7 +189,7 @@ namespace Pchp.Core
             if (end > max) end = max;
 
             for (int i = index; i < end; i++)
-                Add(i, values.GetValue(i));
+                Add(i, PhpValue.FromClr(values.GetValue(i)));
         }
 
         /// <summary>
@@ -961,6 +961,11 @@ namespace Pchp.Core
             return Add(PhpValue.FromClr(value));
         }
 
+        public int Add(string value)
+        {
+            return Add(PhpValue.Create(value));
+        }
+
         public int Add(PhpValue value)
         {
             //if (MaxIntegerKey < int.MaxValue)
@@ -969,7 +974,7 @@ namespace Pchp.Core
 
                 if (nextNewIndex < 0) RefreshMaxIntegerKeyInternal();
                 AddToEnd(value);
-                return 1;
+                return this.nextNewIndex;
             }
             //return 0;
         }
@@ -1379,7 +1384,7 @@ namespace Pchp.Core
 
         #endregion
 
-        #region Clone, InplaceDeepCopy, AddTo, CopyValuesTo
+        #region Clone, InplaceDeepCopy, AddTo, CopyValuesTo, GetValues
 
         /// <summary>
         /// Creates a shallow copy of the hashtable.
@@ -1433,6 +1438,23 @@ namespace Pchp.Core
         /// <param name="dst"></param>
         /// <param name="offset"></param>
         public void CopyValuesTo(PhpValue[]/*!*/dst, int offset) => table.CopyTo(dst, offset);
+
+        /// <summary>
+        /// Copies values to a new array.
+        /// </summary>
+        public PhpValue[] GetValues()
+        {
+            if (this.Count != 0)
+            {
+                var array = new PhpValue[this.Count];
+                this.CopyValuesTo(array, 0);
+                return array;
+            }
+            else
+            {
+                return Array.Empty<PhpValue>();
+            }
+        }
 
         #endregion
 

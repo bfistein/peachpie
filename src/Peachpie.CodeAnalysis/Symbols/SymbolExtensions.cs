@@ -47,7 +47,22 @@ namespace Pchp.CodeAnalysis.Symbols
                     {
                         var ctorargs = attrs[i].ConstructorArguments;
                         var tname = ctorargs[0];
-                        return tname.IsNull ? s.MakeQualifiedName() : QualifiedName.Parse(tname.DecodeValue<string>(SpecialType.System_String), true);
+                        var tnamestr = tname.IsNull ? null : tname.DecodeValue<string>(SpecialType.System_String);
+
+                        const string InheritName = "[name]";
+
+                        if (tnamestr == null)
+                        {
+                            return s.MakeQualifiedName();
+                        }
+                        else if (tnamestr == InheritName)
+                        {
+                            return new QualifiedName(new Name(s.Name));
+                        }
+                        else
+                        {
+                            return QualifiedName.Parse(tnamestr.Replace(InheritName, s.Name), true);
+                        }
                     }
                 }
             }
@@ -60,15 +75,7 @@ namespace Pchp.CodeAnalysis.Symbols
         /// </summary>
         public static QualifiedName MakeQualifiedName(this NamedTypeSymbol type)
         {
-            if (string.IsNullOrEmpty(type.NamespaceName))
-            {
-                return new QualifiedName(new Name(type.Name));
-            }
-            else
-            {
-                var ns = type.NamespaceName.Replace('.', QualifiedName.Separator);
-                return NameUtils.MakeQualifiedName(ns + QualifiedName.Separator + type.Name, true);
-            }
+            return NameUtils.MakeQualifiedName(type.Name, type.NamespaceName, true);
         }
 
         public static bool IsAccessible(this Symbol symbol, TypeSymbol classCtx)

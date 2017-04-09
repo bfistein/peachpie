@@ -230,6 +230,10 @@ namespace Pchp.CodeAnalysis.CodeGen
                 case SpecialType.System_Void:
                     Emit_PhpValue_Void(il, module, diagnostic);
                     break;
+                case SpecialType.System_String:
+                    il.EmitCall(module, diagnostic, ILOpCode.Call, compilation.CoreMethods.PhpValue.Create_String)
+                        .Expect(compilation.CoreTypes.PhpValue);
+                    break;
                 default:
                     if (from == compilation.CoreTypes.PhpAlias)
                     {
@@ -240,12 +244,6 @@ namespace Pchp.CodeAnalysis.CodeGen
                     else if (from == compilation.CoreTypes.PhpValue)
                     {
                         // nop
-                        break;
-                    }
-                    else if (from == compilation.CoreTypes.String)
-                    {
-                        il.EmitCall(module, diagnostic, ILOpCode.Call, compilation.CoreMethods.PhpValue.Create_String)
-                            .Expect(compilation.CoreTypes.PhpValue);
                         break;
                     }
                     else if (from == compilation.CoreTypes.PhpString)
@@ -472,6 +470,10 @@ namespace Pchp.CodeAnalysis.CodeGen
 
                 case SpecialType.System_Int64:
                     _il.EmitOpCode(ILOpCode.Conv_r8);   // Int64 -> Double
+                    return dtype;
+
+                case SpecialType.System_Single:
+                    _il.EmitOpCode(ILOpCode.Conv_r8);   // float -> Double
                     return dtype;
 
                 case SpecialType.System_Double:
@@ -705,6 +707,12 @@ namespace Pchp.CodeAnalysis.CodeGen
             else if (from.SpecialType == SpecialType.System_Void)
             {
                 EmitCall(ILOpCode.Newobj, CoreMethods.Ctors.PhpString);
+            }
+            else if (from == CoreTypes.PhpValue)
+            {
+                EmitLoadContext();  // Context
+                EmitCall(ILOpCode.Call, CoreMethods.Operators.ToPhpString_PhpValue_Context)
+                    .Expect(CoreTypes.PhpString);
             }
             else
             {
@@ -1170,6 +1178,10 @@ namespace Pchp.CodeAnalysis.CodeGen
                     return;
                 case SpecialType.System_Int64:
                     EmitConvertToLong(from, fromHint);
+                    return;
+                case SpecialType.System_Single:
+                    EmitConvertToDouble(from, fromHint);
+                    _il.EmitOpCode(ILOpCode.Conv_r4);
                     return;
                 case SpecialType.System_Double:
                     EmitConvertToDouble(from, fromHint);

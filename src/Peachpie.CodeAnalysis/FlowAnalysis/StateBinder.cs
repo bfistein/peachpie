@@ -32,14 +32,15 @@ namespace Pchp.CodeAnalysis.FlowAnalysis
             var state = new FlowState(flowCtx);
 
             // handle input parameters type
-            var parameters = routine.Parameters.OfType<SourceParameterSymbol>().ToImmutableArray();
+            var parameters = routine.SourceParameters;
             foreach (var p in parameters)
             {
-                state.SetVar(p.Name, p.GetResultType(typeCtx));
+                var local = state.GetLocalHandle(p.Name);
+                state.SetLocalType(local, p.GetResultType(typeCtx));
 
                 if (p.Syntax.PassedByRef)
                 {
-                    state.SetVarRef(p.Name);
+                    state.MarkLocalByRef(local);
                 }
             }
 
@@ -65,9 +66,9 @@ namespace Pchp.CodeAnalysis.FlowAnalysis
             }
 
             //
-            var thisIdx = ctx.GetVarIndex(VariableName.ThisVariableName);
-            initialState.SetVarUsed(thisIdx);
-            initialState.SetVar(thisIdx, thisVarType);
+            var thisHandle = ctx.GetVarIndex(VariableName.ThisVariableName);
+            initialState.SetLocalType(thisHandle, thisVarType); // set $this type
+            initialState.VisitLocal(thisHandle);                // mark as visited (used) to not report as unused
         }
     }
 }

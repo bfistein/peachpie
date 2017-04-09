@@ -89,6 +89,7 @@ namespace Pchp.CodeAnalysis.Semantics
 
         public virtual void VisitIncDec(BoundIncDecEx x)
         {
+            Accept(x.Target);
             Accept(x.Value);
         }
 
@@ -123,7 +124,9 @@ namespace Pchp.CodeAnalysis.Semantics
 
         public virtual void VisitFieldRef(BoundFieldRef x)
         {
-
+            VisitTypeRef(x.ParentType);
+            Accept(x.Instance);
+            Accept(x.FieldName.NameExpression);
         }
 
         public virtual void VisitArray(BoundArrayEx x)
@@ -157,6 +160,11 @@ namespace Pchp.CodeAnalysis.Semantics
 
         }
 
+        public virtual void VisitPseudoClassConstUse(BoundPseudoClassConst x)
+        {
+            VisitTypeRef(x.TargetType);
+        }
+
         public virtual void VisitIsEmpty(BoundIsEmptyEx x)
         {
             Accept(x.Operand);
@@ -165,6 +173,16 @@ namespace Pchp.CodeAnalysis.Semantics
         public virtual void VisitIsSet(BoundIsSetEx x)
         {
             x.VarReferences.ForEach(Accept);
+        }
+
+        public virtual void VisitLambda(BoundLambda x)
+        {
+
+        }
+
+        public virtual void VisitEval(BoundEvalEx x)
+        {
+            Accept(x.CodeExpression);
         }
 
         #endregion

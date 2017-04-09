@@ -2,6 +2,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -23,10 +24,10 @@ namespace Pchp.Core
         /// </summary>
         internal static PhpValue BitAnd(ref PhpValue x, ref PhpValue y)
         {
-            var bx = x.BytesOrNull();
+            var bx = x.ToBytesOrNull();
             if (bx != null)
             {
-                var by = y.BytesOrNull();
+                var by = y.ToBytesOrNull();
                 if (by != null)
                 {
                     throw new NotImplementedException();
@@ -42,10 +43,10 @@ namespace Pchp.Core
         /// </summary>
         internal static PhpValue BitOr(ref PhpValue x, ref PhpValue y)
         {
-            var bx = x.BytesOrNull();
+            var bx = x.ToBytesOrNull();
             if (bx != null)
             {
-                var by = y.BytesOrNull();
+                var by = y.ToBytesOrNull();
                 if (by != null)
                 {
                     throw new NotImplementedException();
@@ -61,10 +62,10 @@ namespace Pchp.Core
         /// </summary>
         internal static PhpValue BitXor(ref PhpValue x, ref PhpValue y)
         {
-            var bx = x.BytesOrNull();
+            var bx = x.ToBytesOrNull();
             if (bx != null)
             {
-                var by = y.BytesOrNull();
+                var by = y.ToBytesOrNull();
                 if (by != null)
                 {
                     return PhpValue.Create(new PhpString(BitXor(bx, by)));
@@ -289,10 +290,16 @@ namespace Pchp.Core
             }
         }
 
+        public static IPhpArray EnsureArray(ArrayAccess obj)
+        {
+            Debug.Assert(obj != null);
+            return new ArrayAccessAsPhpArray(obj);
+        }
+
         public static IPhpArray EnsureArray(object obj)
         {
             // ArrayAccess
-            if (obj is ArrayAccess) return new ArrayAccessAsPhpArray((ArrayAccess)obj);
+            if (obj is ArrayAccess) return EnsureArray((ArrayAccess)obj);
 
             // TODO: Fatal error: Uncaught Error: Cannot use object of type {0} as array
             throw new InvalidOperationException(string.Format(Resources.ErrResources.object_used_as_array, obj.GetType().FullName));
@@ -335,16 +342,78 @@ namespace Pchp.Core
 
         #endregion
 
+        #region Object
+
+        public static bool PropertyExists(RuntimeTypeHandle caller, object instance, PhpValue prop)
+        {
+            var tinfo = instance.GetPhpTypeInfo();
+
+            // 1. instance property
+
+            // 2. runtime property
+
+            // 3. __isset
+
+            // false
+
+            throw new NotImplementedException();
+        }
+
+        public static PhpValue PropertyGetValue(RuntimeTypeHandle caller, object instance, PhpValue prop)
+        {
+            var tinfo = instance.GetPhpTypeInfo();
+
+            // 1. instance property
+
+            // 2. runtime property
+
+            // 3. __get
+
+            // error
+
+            throw new NotImplementedException();
+        }
+
+        public static void PropertySetValue(RuntimeTypeHandle caller, object instance, PhpValue prop, PhpValue value)
+        {
+            var tinfo = instance.GetPhpTypeInfo();
+
+            // 1. instance property
+
+            // 2. overwrite runtime property
+
+            // 3. __set ?? runtime property
+
+            // error
+
+            throw new NotImplementedException();
+        }
+
+        public static void PropertyUnset(RuntimeTypeHandle caller, object instance, PhpValue prop)
+        {
+            var tinfo = instance.GetPhpTypeInfo();
+
+            // 1. instance property
+
+            // 2. unset runtime property
+
+            // 3. __unset
+
+            throw new NotImplementedException();
+        }
+
+        #endregion
+
         #region GetForeachEnumerator
 
         /// <summary>
-		/// Provides the <see cref="IPhpEnumerator"/> interface by wrapping a user-implemeted <see cref="Iterator"/>.
-		/// </summary>
-		/// <remarks>
-		/// Instances of this class are iterated when <c>foreach</c> is used on object of a class
-		/// that implements <see cref="Iterator"/> or <see cref="IteratorAggregate"/>.
-		/// </remarks>
-		private sealed class PhpIteratorEnumerator : IPhpEnumerator
+        /// Provides the <see cref="IPhpEnumerator"/> interface by wrapping a user-implemeted <see cref="Iterator"/>.
+        /// </summary>
+        /// <remarks>
+        /// Instances of this class are iterated when <c>foreach</c> is used on object of a class
+        /// that implements <see cref="Iterator"/> or <see cref="IteratorAggregate"/>.
+        /// </remarks>
+        private sealed class PhpIteratorEnumerator : IPhpEnumerator
         {
             readonly Iterator _iterator;
             bool _hasmoved;
@@ -420,7 +489,7 @@ namespace Pchp.Core
         {
             readonly IEnumerator<KeyValuePair<IntStringKey, PhpValue>> _enumerator;
             bool _valid;
-            
+
             public PhpFieldsEnumerator(object obj, RuntimeTypeHandle caller)
             {
                 Debug.Assert(obj != null);
@@ -610,12 +679,53 @@ namespace Pchp.Core
 
         #endregion
 
+        #region BuildClosure
+
+        /// <summary>
+        /// Create <see cref="Closure"/> with specified anonymous function and used parameters.
+        /// </summary>
+        public static Closure BuildClosure(RoutineInfo routine, PhpArray parameter, PhpArray @static) => new Closure(routine, parameter, @static);
+
+        #endregion
+
         #region Enumerator
 
         /// <summary>
         /// Gets enumerator object for given value.
         /// </summary>
         public static IPhpEnumerator GetForeachEnumerator(PhpValue value, bool aliasedValues, RuntimeTypeHandle caller) => value.GetForeachEnumerator(aliasedValues, caller);
+
+        #endregion
+
+        #region Dynamic
+
+        /// <summary>
+        /// Performs dynamic code evaluation in given context.
+        /// </summary>
+        /// <returns>Evaluated code return value.</returns>
+        public static PhpValue Eval(Context ctx, PhpArray locals, object @this, string code, string currentpath, int line, int column)
+        {
+            Debug.Assert(ctx != null);
+            Debug.Assert(locals != null);
+
+            if (string.IsNullOrEmpty(code))
+            {
+                return PhpValue.Null;
+            }
+
+            var script = ctx.ScriptingProvider.CreateScript(
+                new Context.ScriptOptions()
+                {
+                    Context = ctx,
+                    Location = new Location(Path.Combine(ctx.RootPath, currentpath), line, column),
+                    EmitDebugInformation = false,   // TODO
+                    IsSubmission = true,
+                },
+                code);
+
+            //
+            return script.Evaluate(ctx, locals, @this);
+        }
 
         #endregion
     }

@@ -20,39 +20,6 @@ namespace Peachpie.Web
     [DebuggerDisplay("RequestContextCore({DebugRequestDisplay,nq})")]
     sealed class RequestContextCore : Context, IHttpPhpContext
     {
-        #region .cctor
-
-        static RequestContextCore()
-        {
-            LoadScriptReferences();
-        }
-
-        /// <summary>
-        /// Loads assemblies representing referenced scripts and reflects their symbols to be used by the runtime.
-        /// </summary>
-        static void LoadScriptReferences()
-        {
-            LoadScript(new System.Reflection.AssemblyName("website"));
-        }
-
-        static void LoadScript(System.Reflection.AssemblyName assname)
-        {
-            try
-            {
-                var ass = System.Reflection.Assembly.Load(assname);
-                if (ass != null)
-                {
-                    AddScriptReference(ass.GetType(ScriptInfo.ScriptTypeName));
-                }
-            }
-            catch
-            {
-            }
-
-        }
-
-        #endregion
-
         /// <summary>
         /// Debug display string.
         /// </summary>
@@ -95,18 +62,23 @@ namespace Peachpie.Web
         /// <summary>
         /// Stream with contents of the incoming HTTP entity body.
         /// </summary>
-        public Stream InputStream => _httpctx.Request.Body;
+        Stream IHttpPhpContext.InputStream => _httpctx.Request.Body;
 
-        public void AddCookie(string name, string value, DateTimeOffset? expires, string path = "/", string domain = null, bool secure = false, bool httpOnly = false)
+        void IHttpPhpContext.AddCookie(string name, string value, DateTimeOffset? expires, string path, string domain, bool secure, bool httpOnly)
         {
             _httpctx.Response.Cookies.Append(name, value, new CookieOptions()
             {
                 Expires = expires,
                 Path = path,
-                Domain = domain,
+                Domain = string.IsNullOrEmpty(domain) ? null : domain,  // IE, Edge: cookie with the empty domain was not passed to request
                 Secure = secure,
                 HttpOnly = httpOnly
             });
+        }
+
+        void IHttpPhpContext.Flush()
+        {
+            _httpctx.Response.Body.Flush();
         }
 
         #endregion
@@ -154,19 +126,22 @@ namespace Peachpie.Web
             // set additional $_SERVER items
             AddServerScriptItems(script);
 
+            // remember the initial script file
+            this.MainScriptFile = script;
+
             //
 
             try
             {
                 if (Debugger.IsAttached)
                 {
-                    script.MainMethod(this, this.Globals, null);
+                    script.Evaluate(this, this.Globals, null);
                 }
                 else
                 {
                     using (_requestTimer = new Timer(RequestTimeout, null, this.Configuration.Core.ExecutionTimeout, Timeout.Infinite))
                     {
-                        script.MainMethod(this, this.Globals, null);
+                        script.Evaluate(this, this.Globals, null);
                     }
                 }
             }
@@ -201,7 +176,8 @@ namespace Peachpie.Web
 
         public override IHttpPhpContext HttpPhpContext => this;
 
-        public override Encoding StringEncoding => Encoding.UTF8;
+        public override Encoding StringEncoding => _encoding;
+        readonly Encoding _encoding;
 
         /// <summary>
         /// Application physical root directory including trailing slash.
@@ -220,17 +196,19 @@ namespace Peachpie.Web
         /// </summary>
         Timer _requestTimer;
 
-        public RequestContextCore(HttpContext httpcontext, string rootPath)
+        public RequestContextCore(HttpContext httpcontext, string rootPath, Encoding encoding)
         {
             Debug.Assert(httpcontext != null);
             Debug.Assert(rootPath != null);
             Debug.Assert(rootPath == ScriptsMap.NormalizeSlashes(rootPath));
             Debug.Assert(rootPath.Length != 0 && rootPath[rootPath.Length - 1] != '/');
+            Debug.Assert(encoding != null);
 
             _httpctx = httpcontext;
             _rootPath = rootPath;
+            _encoding = encoding;
 
-            this.InitOutput(httpcontext.Response.Body, new ResponseTextWriter(httpcontext.Response, StringEncoding));
+            this.InitOutput(httpcontext.Response.Body, new ResponseTextWriter(httpcontext.Response, encoding));
             this.InitSuperglobals();
 
             // TODO: start session if AutoStart is On
